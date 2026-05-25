@@ -1,0 +1,266 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * jelly-config — Interactive config updater for JellyOS.
+ *
+ * Usage:
+ *   jelly-config          — interactive menu
+ *   jellyos config        — same, via main launcher
+ */
+
+const fs   = require('fs');
+const path = require('path');
+const os   = require('os');
+const readline = require('readline');
+
+const JELLY_HOME = process.env.JELLYOS_HOME || path.join(os.homedir(), '.jelly');
+const ENV_PATH   = path.join(JELLY_HOME, '.env');
+
+const CYAN  = '\x1b[96m';
+const GOLD  = '\x1b[93m';
+const GREEN = '\x1b[92m';
+const RED   = '\x1b[91m';
+const GRAY  = '\x1b[90m';
+const BOLD  = '\x1b[1m';
+const DIM   = '\x1b[2m';
+const NC    = '\x1b[0m';
+
+// ── .env helpers ─────────────────────────────────────────────────────────────
+
+function readEnv() {
+  const out = {};
+  if (!fs.existsSync(ENV_PATH)) return out;
+  for (const line of fs.readFileSync(ENV_PATH, 'utf-8').split('\n')) {
+    const m = line.trim().match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+  return out;
+}
+
+function writeEnv(key, val) {
+  fs.mkdirSync(JELLY_HOME, { recursive: true });
+  const content = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, 'utf-8') : '';
+  const re   = new RegExp(`^${key}=.*$`, 'm');
+  const line = `${key}=${val}`;
+  const next = re.test(content) ? content.replace(re, line) : content + (content.endsWith('\n') ? '' : '\n') + line + '\n';
+  fs.writeFileSync(ENV_PATH, next, 'utf-8');
+  try { fs.chmodSync(ENV_PATH, 0o600); } catch {}
+}
+
+function deleteEnv(key) {
+  if (!fs.existsSync(ENV_PATH)) return;
+  const lines = fs.readFileSync(ENV_PATH, 'utf-8').split('\n').filter(l => !l.startsWith(key + '='));
+  fs.writeFileSync(ENV_PATH, lines.join('\n'), 'utf-8');
+}
+
+function mask(val) {
+  if (!val) return `${DIM}(not set)${NC}`;
+  if (val.length <= 8) return `${GOLD}****${NC}`;
+  return `${GOLD}${val.slice(0, 4)}${'*'.repeat(Math.min(val.length - 8, 16))}${val.slice(-4)}${NC}`;
+}
+
+// ── readline helpers ──────────────────────────────────────────────────────────
+
+function ask(prompt) {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(prompt, ans => { rl.close(); resolve(ans.trim()); });
+  });
+}
+
+// ── Config sections ───────────────────────────────────────────────────────────
+
+const API_KEYS = [
+  { key: 'OPENROUTER_API_KEY',  label: 'OpenRouter API key',     hint: 'https://openrouter.ai/keys',     required: true  },
+  { key: 'ALCHEMY_KEY',         label: 'Alchemy API key',        hint: 'https://alchemy.com',             required: false },
+  { key: 'COINGECKO_API_KEY',   label: 'CoinGecko Pro key',      hint: 'https://coingecko.com/api',       required: false },
+  { key: 'POLYMARKET_API_KEY',  label: 'Polymarket API key',     hint: 'https://polymarket.com',          required: false },
+  { key: 'BIRDEYE_API_KEY',     label: 'Birdeye API key',        hint: 'https://birdeye.so',              required: false },
+];
+
+const AGENT_SETTINGS = [
+  { key: 'DEFAULT_MODEL',       label: 'Default model',          hint: 'e.g. anthropic/claude-opus-4-5'  },
+  { key: 'DEFAULT_EFFECT',      label: 'Default effect level',   hint: 'eco | normal | turbo | max'      },
+  { key: 'AUTOVAULT_THRESHOLD', label: 'AutoVault threshold ($)', hint: 'Sweep to vault above this amount'},
+];
+
+const MODEL_PRESETS = [
+  'anthropic/claude-opus-4-5',
+  'anthropic/claude-sonnet-4-5',
+  'openai/gpt-4o',
+  'openai/o3-mini',
+  'deepseek/deepseek-r1',
+  'google/gemini-2.5-pro',
+  'meta-llama/llama-3.3-70b-instruct',
+];
+
+// ── Screens ────────────────────────────────────────────────────────────────────
+
+function printHeader() {
+  console.clear();
+  console.log('');
+  console.log(`${CYAN}${BOLD}  ╔══════════════════════════════════════╗${NC}`);
+  console.log(`${CYAN}${BOLD}  ║   🪼  JellyOS Config                 ║${NC}`);
+  console.log(`${CYAN}${BOLD}  ╚══════════════════════════════════════╝${NC}`);
+  console.log(`  ${GRAY}Home: ${JELLY_HOME}${NC}\n`);
+}
+
+async function editApiKeys() {
+  printHeader();
+  console.log(`${BOLD}  API Keys${NC}\n`);
+  const env = readEnv();
+  for (const f of API_KEYS) {
+    const current = env[f.key] || '';
+    const display = current ? mask(current) : `${DIM}(not set)${NC}`;
+    console.log(`  ${f.label}: ${display}`);
+    if (f.hint) console.log(`  ${GRAY}  ${f.hint}${NC}`);
+    const val = await ask(`  New value (Enter to keep${current ? '' : f.required ? ', required' : ', skip'}): `);
+    if (val) {
+      writeEnv(f.key, val);
+      console.log(`  ${GREEN}✓ Saved${NC}`);
+    }
+  }
+  await ask(`\n  ${GRAY}Done. Press Enter to return to menu.${NC} `);
+}
+
+async function editAgentSettings() {
+  printHeader();
+  console.log(`${BOLD}  Agent Settings${NC}\n`);
+  const env = readEnv();
+
+  // Model with pick list
+  const currentModel = env['DEFAULT_MODEL'] || 'not set';
+  console.log(`  Current model: ${GOLD}${currentModel}${NC}`);
+  console.log('');
+  MODEL_PRESETS.forEach((m, i) => console.log(`  ${GRAY}[${i + 1}]${NC} ${m}`));
+  console.log(`  ${GRAY}[0]${NC} Enter custom model ID`);
+  const pick = await ask('\n  Pick a model (number or Enter to keep): ');
+  if (pick) {
+    const n = parseInt(pick);
+    if (n >= 1 && n <= MODEL_PRESETS.length) {
+      writeEnv('DEFAULT_MODEL', MODEL_PRESETS[n - 1]);
+      console.log(`  ${GREEN}✓ Model set to ${MODEL_PRESETS[n - 1]}${NC}`);
+    } else if (n === 0 || isNaN(n)) {
+      const custom = await ask('  Custom model ID: ');
+      if (custom) { writeEnv('DEFAULT_MODEL', custom); console.log(`  ${GREEN}✓ Saved${NC}`); }
+    }
+  }
+
+  // Effect level
+  const currentEffect = env['DEFAULT_EFFECT'] || 'normal';
+  console.log(`\n  Effect level: ${GOLD}${currentEffect}${NC} ${GRAY}(eco | normal | turbo | max)${NC}`);
+  const eff = await ask('  New effect level (Enter to keep): ');
+  if (eff && ['eco', 'normal', 'turbo', 'max'].includes(eff.toLowerCase())) {
+    writeEnv('DEFAULT_EFFECT', eff.toLowerCase());
+    console.log(`  ${GREEN}✓ Saved${NC}`);
+  } else if (eff) {
+    console.log(`  ${RED}Invalid — must be eco | normal | turbo | max${NC}`);
+  }
+
+  // AutoVault threshold
+  const currentThreshold = env['AUTOVAULT_THRESHOLD'] || '100';
+  console.log(`\n  AutoVault threshold: ${GOLD}$${currentThreshold}${NC} ${GRAY}(sweep profits above this)${NC}`);
+  const thresh = await ask('  New threshold in USD (Enter to keep): ');
+  if (thresh && !isNaN(parseFloat(thresh))) {
+    writeEnv('AUTOVAULT_THRESHOLD', thresh);
+    console.log(`  ${GREEN}✓ Saved${NC}`);
+  } else if (thresh) {
+    console.log(`  ${RED}Invalid — must be a number${NC}`);
+  }
+
+  await ask(`\n  ${GRAY}Done. Press Enter to return to menu.${NC} `);
+}
+
+async function changeVaultPassphrase() {
+  printHeader();
+  console.log(`${BOLD}  Vault Passphrase${NC}\n`);
+  console.log(`  ${GRAY}The vault passphrase protects the profit ledger (balance records).${NC}`);
+  console.log(`  ${GRAY}It is separate from your cold wallet private keys.${NC}\n`);
+  const oldPass = await ask('  Current passphrase: ');
+  const newPass = await ask('  New passphrase: ');
+  const confirm = await ask('  Confirm new passphrase: ');
+  if (newPass !== confirm) {
+    console.log(`  ${RED}Passphrases do not match.${NC}`);
+  } else {
+    // Delegate to VaultManager if available
+    try {
+      const { VaultManager } = require('../src/vault/VaultManager');
+      const vm = new VaultManager(JELLY_HOME);
+      if (!vm.exists()) { console.log(`  ${RED}No vault found. Run jellyos setup first.${NC}`); }
+      else {
+        const ok = await vm.unlock(oldPass);
+        if (!ok) { console.log(`  ${RED}Wrong passphrase.${NC}`); }
+        else {
+          await vm.changePassphrase(newPass);
+          console.log(`  ${GREEN}✓ Vault passphrase updated${NC}`);
+        }
+      }
+    } catch (e) {
+      console.log(`  ${RED}Could not update passphrase: ${e.message}${NC}`);
+    }
+  }
+  await ask(`\n  ${GRAY}Press Enter to return to menu.${NC} `);
+}
+
+async function showVaultAddresses() {
+  printHeader();
+  console.log(`${BOLD}  Vault Cold Addresses${NC}\n`);
+  const addrFile = path.join(JELLY_HOME, 'vault-addresses.json');
+  if (!fs.existsSync(addrFile)) {
+    console.log(`  ${RED}No vault addresses found. Run: jellyos setup${NC}`);
+  } else {
+    const a = JSON.parse(fs.readFileSync(addrFile, 'utf-8'));
+    console.log(`  ${GRAY}These are your cold vault addresses. Funds sent here can only${NC}`);
+    console.log(`  ${GRAY}be accessed with your saved private key.${NC}\n`);
+    console.log(`  EVM:    ${GREEN}${a.evm}${NC}`);
+    console.log(`  Solana: ${GREEN}${a.solana}${NC}`);
+    console.log(`  Cosmos: ${GREEN}${a.cosmos}${NC}`);
+    console.log(`\n  ${GRAY}Generated: ${new Date(a.generatedAt).toLocaleString()}${NC}`);
+  }
+  await ask(`\n  ${GRAY}Press Enter to return to menu.${NC} `);
+}
+
+async function showCurrentConfig() {
+  printHeader();
+  console.log(`${BOLD}  Current Configuration${NC}\n`);
+  const env = readEnv();
+  for (const f of [...API_KEYS, ...AGENT_SETTINGS]) {
+    const val = env[f.key];
+    const display = f.key.includes('KEY') ? mask(val || '') : (val ? `${GOLD}${val}${NC}` : `${DIM}(not set)${NC}`);
+    console.log(`  ${f.label.padEnd(26)} ${display}`);
+  }
+  console.log('');
+  await ask(`  ${GRAY}Press Enter to return to menu.${NC} `);
+}
+
+// ── Main menu ─────────────────────────────────────────────────────────────────
+
+async function main() {
+  const MENU = [
+    { label: 'Edit API keys',              fn: editApiKeys         },
+    { label: 'Agent settings & model',     fn: editAgentSettings   },
+    { label: 'Change vault passphrase',    fn: changeVaultPassphrase },
+    { label: 'Show vault cold addresses',  fn: showVaultAddresses  },
+    { label: 'Show current config',        fn: showCurrentConfig   },
+    { label: 'Exit',                       fn: null                },
+  ];
+
+  while (true) {
+    printHeader();
+    console.log(`${BOLD}  Menu${NC}\n`);
+    MENU.forEach((item, i) => console.log(`  ${GRAY}[${i + 1}]${NC} ${item.label}`));
+    console.log('');
+    const pick = await ask('  Choose: ');
+    const n = parseInt(pick);
+    if (!n || n === MENU.length) {
+      console.log('\n  Bye.\n');
+      process.exit(0);
+    }
+    if (n >= 1 && n < MENU.length && MENU[n - 1].fn) {
+      await MENU[n - 1].fn();
+    }
+  }
+}
+
+main().catch(e => { console.error(e.message); process.exit(1); });

@@ -1,0 +1,61 @@
+{
+  "system": {
+    "mode": "development",
+    "apiPort": 3000,
+    "maxConcurrency": 10,
+    "timeout": 30000,
+    "retryAttempts": 3,
+    "backoffDelay": 1000
+  },
+  "agents": {
+    "maxAgents": 20,
+    "heartbeatInterval": 5000,
+    "taskTimeout": 30000,
+    "memoryLimit": 512,
+    "defaultAgent": "main"
+  },
+  "blockchain": {
+    "chains": ["bsc","ethereum","solana","base","arbitrum"],
+    "rpcEndpoints": {
+      "ethereum": "https://eth-mainnet.g.alchemy.com/v2/",
+      "bsc": "https://bnb-mainnet.g.alchemy.com/v2/",
+      "solana": "https://solana-mainnet.g.alchemy.com/v2/",
+      "arbitrum": "https://arb-mainnet.g.alchemy.com/v2/",
+      "base": "https://base-mainnet.g.alchemy.com/v2/"
+    },
+    "confirmations": 12,
+    "gasMultiplier": 1.2
+  },
+  "prediction": {
+    "models": ["lstm","arima","garch"],
+    "updateInterval": 60000,
+    "confidenceThreshold": 0.7,
+    "historyWindow": 86400000
+  },
+  "trading": {
+    "enabled": false,
+    "maxSlippage": 0.01,
+    "positionSize": 0.05,
+    "stopLoss": 0.1,
+    "takeProfit": 0.2,
+    "maxPositions": 10
+  },
+  "context": {
+    "ttl": 3600,
+    "maxSize": 10000,
+    "persistencePath": "./data/context"
+  },
+  "logging": {
+    "level": "info",
+    "fileOutput": true,
+    "consoleOutput": true,
+    "logDirectory": "./logs"
+  },
+  "features": {
+    "prediction": true,
+    "trading": true,
+    "alerts": true,
+    "learning": true,
+    "cache": true
+  }
+}
