@@ -17,7 +17,8 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen?style=flat-square)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE)
 
-[Website](http://jelly-os.xyz/) • [Telegram](https://t.me/jellyxchain) • [X / Twitter](https://x.com/agentz010) • [API](https://jellychain.fun)
+[Website](http://jelly-os.xyz/) • [Telegram](https://t.me/jellyxchain) • [X / Twitter](https://x.com/agentz010) • [API](https://jellychain.fun) •
+[Claude Wrapper](https://github.com/jelly-chain/jelly-claude) • [PI Extention](https://github.com/jelly-chain/jellyOS-PI-Framework) • [NPM](https://www.npmjs.com/package/@jellyos/agent) • [NPM Docs](https://github.com/jelly-chain/JellyOS-NPM)
 
 </div>
 
