@@ -11,7 +11,6 @@
  ╚════╝ ╚══════╝╚══════╝╚══════╝╚═╝     ╚═════╝ ╚══════╝
 </pre>
 
-**Standalone AI trading agent. Runs 100% locally. No server. No inbound ports. No cloud dependency.**
 
 [![npm](https://img.shields.io/npm/v/@jellyos/agent?color=14b8a6&style=flat-square)](https://www.npmjs.com/package/@jellyos/agent)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen?style=flat-square)](https://nodejs.org)
