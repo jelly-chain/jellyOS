@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/earendil-works/pi/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+  "name": "jelly",
+  "vars": {
+    "jellyBlue":   "#6ee7f7",
+    "jellyPurple": "#a78bfa",
+    "jellyGreen":  "#34d399",
+    "jellyRed":    "#f87171",
+    "jellyYellow": "#fbbf24",
+    "bgDeep":      "#0d0f1a",
+    "bgCard":      "#131524",
+    "bgTool":      "#111422",
+    "bgUser":      "#141628",
+    "bgCustom":    "#16142a",
+    "gray":        "#6b7280",
+    "dimGray":     "#4b5563",
+    "text":        "#e2e8f0"
+  },
+  "colors": {
+    "accent":       "jellyBlue",
+    "border":       "jellyPurple",
+    "borderAccent": "jellyBlue",
+    "borderMuted":  "dimGray",
+    "success":      "jellyGreen",
+    "error":        "jellyRed",
+    "warning":      "jellyYellow",
+    "muted":        "gray",
+    "dim":          "dimGray",
+    "text":         "text",
+    "thinkingText": "gray",
+
+    "selectedBg":       "bgCard",
+    "userMessageBg":    "bgUser",
+    "userMessageText":  "text",
+    "customMessageBg":  "bgCustom",
+    "customMessageText":"text",
+    "customMessageLabel":"jellyPurple",
+    "toolPendingBg":    "bgTool",
+    "toolSuccessBg":    "#0f1f17",
+    "toolErrorBg":      "#1f0f0f",
+    "toolTitle":        "jellyBlue",
+    "toolOutput":       "gray",
+
+    "mdHeading":        "jellyYellow",
+    "mdLink":           "jellyBlue",
+    "mdLinkUrl":        "dimGray",
+    "mdCode":           "jellyPurple",
+    "mdCodeBlock":      "jellyGreen",
+    "mdCodeBlockBorder":"dimGray",
+    "mdQuote":          "gray",
+    "mdQuoteBorder":    "dimGray",
+    "mdHr":             "dimGray",
+    "mdListBullet":     "jellyBlue",
+
+    "toolDiffAdded":    "jellyGreen",
+    "toolDiffRemoved":  "jellyRed",
+    "toolDiffContext":  "gray",
+
+    "syntaxComment":    "#6A9955",
+    "syntaxKeyword":    "#569CD6",
+    "syntaxFunction":   "#DCDCAA",
+    "syntaxVariable":   "#9CDCFE",
+    "syntaxString":     "#CE9178",
+    "syntaxNumber":     "#B5CEA8",
+    "syntaxType":       "#4EC9B0",
+    "syntaxOperator":   "#D4D4D4",
+    "syntaxPunctuation":"#D4D4D4",
+
+    "thinkingOff":      "dimGray",
+    "thinkingMinimal":  "#4b6b7a",
+    "thinkingLow":      "#3b6b8a",
+    "thinkingMedium":   "jellyBlue",
+    "thinkingHigh":     "jellyPurple",
+    "thinkingXhigh":    "#d183e8",
+
+    "bashMode":         "jellyGreen"
+  },
+  "export": {
+    "pageBg":   "#0d0f1a",
+    "cardBg":   "#131524",
+    "infoBg":   "#1a1830"
+  }
+}

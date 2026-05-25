@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": false,
+    "noImplicitAny": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": [
+    "src/core/**/*",
+    "src/feeds/**/*",
+    "src/vault/**/*",
+    "src/wallet/**/*",
+    "src/blockchain/**/*",
+    "src/trading/**/*",
+    "src/prediction/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/agent",
+    "src/ui",
+    "src/context",
+    "src/middleware",
+    "src/setup",
+    "src/utils",
+    "src/config",
+    "src/test",
+    "src/Index.ts"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "appName": "JellyOS",
+  "version": "1.0.0",
+  "environment": "development",
+  "logLevel": "info",
+  "networks": {
+    "solana": {
+      "mainnet": "https://api.mainnet-beta.solana.com",
+      "devnet": "https://api.devnet.solana.com",
+      "testnet": "https://api.testnet.solana.com"
+    },
+    "ethereum": {
+      "mainnet": "https://eth-mainnet.alchemyapi.io/v2/",
+      "goerli": "https://eth-goerli.alchemyapi.io/v2/"
+    },
+    "bsc": {
+      "mainnet": "https://bsc-dataseed.binance.org/",
+      "testnet": "https://data-seed-prebsc-1-s1.binance.org:8545/"
+    }
+  },
+  "features": {
+    "trading": {
+      "enabled": true,
+      "defaultSlippage": 0.5,
+      "maxSlippage": 5.0
+    },
+    "prediction": {
+      "enabled": true,
+      "defaultConfidenceThreshold": 0.8
+    }
+  },
+  "redis": {
+    "host": "localhost",
+    "port": 6379,
+    "ttl": 3600
+  },
+  "security": {
+    "jwtExpiration": "24h",
+    "encryptionAlgorithm": "aes-256-gcm"
+  },
+  "limits": {
+    "rateLimit": {
+      "windowMs": 900000,
+      "max": 100
+    }
+  }
+}
