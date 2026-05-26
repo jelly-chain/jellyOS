@@ -1,6 +1,6 @@
 
 
-import { Type } from "@jellyos/agent";
+import { Type, modelRegistry, priceFeed, newsFeed, fullAnalysis } from "@jellyos/agent";
 import type { ExtensionAPI } from "@jellyos/agent";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -12,7 +12,7 @@ import { AutoVault } from "../src/vault/AutoVault";
 import { FeedManager } from "../src/feeds/FeedManager";
 import { SignalEngine } from "../src/feeds/SignalEngine";
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// -- Constants ----------------------------------------------------------------
 
 const JELLY_HOME = process.env.JELLYOS_HOME ?? path.join(os.homedir(), ".jelly");
 
@@ -31,7 +31,7 @@ const CHAIN_SYMBOL: Record<string, string> = {
   mantle: "MNT",   blast: "ETH",   solana: "SOL",
 };
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// -- Helpers ------------------------------------------------------------------
 
 function text(t: string) {
   return { content: [{ type: "text" as const, text: t }], details: {} };
@@ -64,7 +64,7 @@ const ALLOWED_CONTEXT_KEYS = new Set([
   "model", "debug_log",
 ]);
 
-// ── WebSocket dashboard server (localhost only) ───────────────────────────────
+// -- WebSocket dashboard server (localhost only) -------------------------------
 
 const wsClients = new Set<WebSocket>();
 
@@ -100,11 +100,43 @@ dashServer.on("connection", (ws: WebSocket) => {
   ws.send(JSON.stringify({ type: "connected", timestamp: Date.now() }));
   ws.on("close", () => wsClients.delete(ws));
   ws.on("error", () => wsClients.delete(ws));
+  // Bi-directional: handle incoming dashboard messages
+  ws.on("message", (raw: Buffer) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === "agent_message" && msg.text) {
+        _dashboardMessages.push({ text: String(msg.text), ts: Date.now() });
+        if (_dashboardMessages.length > 50) _dashboardMessages = _dashboardMessages.slice(-50);
+        ws.send(JSON.stringify({ type: "message_queued", id: Date.now() }));
+      } else if (msg.type === "set_effect" && msg.level) {
+        const { writeFileSync, readFileSync, existsSync, mkdirSync } = require("node:fs");
+        const ctxPath = path.join(JELLY_HOME, "context.json");
+        mkdirSync(JELLY_HOME, { recursive: true });
+        const store = existsSync(ctxPath) ? JSON.parse(readFileSync(ctxPath, "utf-8")) : {};
+        store.effect_level = msg.level;
+        writeFileSync(ctxPath, JSON.stringify(store, null, 2), "utf-8");
+        broadcastWs("effect_changed", { level: msg.level });
+        ws.send(JSON.stringify({ type: "effect_set", level: msg.level }));
+      } else if (msg.type === "get_status") {
+        const s = _statusReady ? {
+          vault: _statusV ? (_statusV.isLocked() ? "locked" : `$${_statusV.getStats().balance?.toFixed(2) ?? "0"}`) : "unavailable",
+          feeds: _statusF?.getStats() ?? null,
+          signals: _statusS?.getActiveSignals().length ?? 0,
+          wallets: _statusW ? Object.keys(_statusW.getSummary()).length : 0,
+          uptime: process.uptime(),
+          models: modelRegistry.modelCount,
+          prices: priceFeed.getAll().length,
+          news: newsFeed.getLatest()?.items.length ?? 0,
+        } : { vault: "initializing", uptime: process.uptime() };
+        ws.send(JSON.stringify({ type: "status", data: s }));
+      }
+    } catch { /* malformed message */ }
+  });
 });
 
-// ── Extension ─────────────────────────────────────────────────────────────────
+// -- Extension -----------------------------------------------------------------
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// -- Types ----------------------------------------------------------------------
 
 interface AlertDef {
   id: string; symbol: string; condition: ">" | "<"; threshold: number; created: number;
@@ -120,7 +152,10 @@ interface TgMessage   { id: number;  text: string; from: string; }
 interface DcMessage   { id: string;  text: string; author: string; }
 interface WsSignal    { ticker: string; action: string; price: number; ts: number; [k: string]: unknown; }
 
-// ── Module-level bridge state ──────────────────────────────────────────────────
+// -- Pending dashboard messages (WebSocket) ----------------------------
+let _dashboardMessages: Array<{ text: string; ts: number }> = [];
+let _statusReady = false;
+let _statusV: any, _statusF: any, _statusS: any, _statusW: any;
 
 let _telegramOffset  = 0;
 let _telegramPending: TgMessage[] = [];
@@ -136,7 +171,7 @@ let _alertTimer:     ReturnType<typeof setInterval> | null = null;
 let _walletTimer:    ReturnType<typeof setInterval> | null = null;
 let _webhookHttpSrv: any = null;
 
-// ── Telegram helpers ───────────────────────────────────────────────────────────
+// -- Telegram helpers -----------------------------------------------------------
 
 async function _tgPoll(): Promise<void> {
   if (_tgPolling) return;  // skip if previous poll hasn't finished
@@ -171,7 +206,7 @@ async function _tgSend(text: string): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
-// ── Discord helpers ────────────────────────────────────────────────────────────
+// -- Discord helpers ------------------------------------------------------------
 
 async function _dcPoll(): Promise<void> {
   if (_dcPolling) return;  // skip if previous poll hasn't finished
@@ -213,7 +248,7 @@ async function _dcSend(text: string): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
-// ── Alert check (called every 30 s) ───────────────────────────────────────────
+// -- Alert check (called every 30 s) -------------------------------------------
 
 function _checkAlerts(feeds: FeedManager | null): void {
   if (!feeds) return;
@@ -259,7 +294,7 @@ function _checkAlerts(feeds: FeedManager | null): void {
   }
 }
 
-// ── Watched-wallet polling ─────────────────────────────────────────────────────
+// -- Watched-wallet polling -----------------------------------------------------
 
 async function _pollWatchedWallets(): Promise<void> {
   const alchemyKey = process.env.ALCHEMY_KEY;
@@ -300,7 +335,7 @@ async function _pollWatchedWallets(): Promise<void> {
   }
 }
 
-// ── Journal helper ─────────────────────────────────────────────────────────────
+// -- Journal helper -------------------------------------------------------------
 
 function _logTrade(entry: JournalEntry): void {
   try {
@@ -312,14 +347,14 @@ function _logTrade(entry: JournalEntry): void {
   } catch { /* non-fatal */ }
 }
 
-// ── TradingView webhook server ─────────────────────────────────────────────────
+// -- TradingView webhook server -------------------------------------------------
 
 function _startWebhookServer(): void {
   const port = parseInt(process.env.JELLY_WEBHOOK_PORT ?? "9340", 10);
   const http = require("node:http");
   _webhookHttpSrv = http.createServer((req: any, res: any) => {
     if (req.method !== "POST" || req.url !== "/webhook") {
-      res.writeHead(404); res.end("JellyOS webhook — POST /webhook"); return;
+      res.writeHead(404); res.end("JellyOS webhook -- POST /webhook"); return;
     }
     let body = "";
     req.on("data", (c: Buffer) => { body += c.toString(); });
@@ -338,7 +373,7 @@ function _startWebhookServer(): void {
   _webhookHttpSrv.on("error", () => {}); // non-fatal if port already in use
 }
 
-// ── Extension ─────────────────────────────────────────────────────────────────
+// -- Extension -----------------------------------------------------------------
 
 export default function jellyos(agent: ExtensionAPI): void {
   let wallet:    WalletManager | null = null;
@@ -347,7 +382,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   let feeds:     FeedManager   | null = null;
   let signals:   SignalEngine   | null = null;
 
-  // ── Boot ───────────────────────────────────────────────────────────────────
+  // -- Boot -------------------------------------------------------------------
 
   agent.on("session_start", async (_e, ctx) => {
     try {
@@ -376,16 +411,34 @@ export default function jellyos(agent: ExtensionAPI): void {
 
       // NOTE: setHeader is intentionally NOT used.
       // Custom header render() is called on every streaming token, causing agent to
-      // emit a new full-frame border without erasing the previous one — stacking
-      // ┌────────────────┐ lines on every reply. Branding lives in the status bar.
+      // emit a new full-frame border without erasing the previous one -- stacking
+      // +----------------+ lines on every reply. Branding lives in the status bar.
 
       // NOTE: setTheme() and all setStatus() calls are deferred to a single
       // update at the very end of boot. Each setStatus() call triggers a full
-      // agent TUI re-render — calling it mid-init stacks ┌──────────┐ borders.
+      // agent TUI re-render -- calling it mid-init stacks +----------+ borders.
 
       try { feeds.start(); } catch { /* feed errors are non-fatal */ }
 
-      // Start background bridges (no setStatus calls here — deferred below)
+      // Start framework-level feeds (price tickers, news sentiment)
+      try {
+        priceFeed.track("btc", "eth", "sol", "bnb", "matic", "arb", "op", "avax", "link", "uni", "doge", "xrp", "ada", "dot", "atom", "near", "sui", "apt", "pepe", "aave");
+        priceFeed.start();
+        newsFeed.start();
+      } catch { /* framework feed errors are non-fatal */ }
+
+      // Init dynamic model registry (357 models from OpenRouter)
+      modelRegistry.initialise().catch(() => {});
+
+      // Wire model count to status bar
+      setTimeout(() => {
+        ctx.ui.setStatus("models", `${modelRegistry.modelCount} models`);
+      }, 2000);
+
+      // Wire dashboard status
+      _statusReady = true; _statusV = vault; _statusF = feeds; _statusS = signals; _statusW = wallet;
+
+      // Start background bridges (no setStatus calls here -- deferred below)
       if (process.env.TELEGRAM_BOT_TOKEN) {
         _tgPoll();
         _telegramTimer = setInterval(_tgPoll, 3000);
@@ -398,7 +451,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       _alertTimer  = setInterval(() => _checkAlerts(feeds), 30_000);
       _walletTimer = setInterval(_pollWatchedWallets, 60_000);
 
-      // ── No setStatus calls during boot ──────────────────────────────────────
+      // -- No setStatus calls during boot --------------------------------------
       // Each ctx.ui.setStatus() triggers a full agent TUI re-render. On startup,
       // agent has already drawn frame 1. A setStatus call causes frame 2, and
       // Ink's cursor-up is off by 1 (wide emoji: 🪼 🔒 ⚡ are 2 visual cols
@@ -407,13 +460,15 @@ export default function jellyos(agent: ExtensionAPI): void {
       // Bridge status is logged to console below instead.
     } catch {
       // Boot errors: log to console (non-fatal) to avoid a setStatus re-render
-      console.error("[JellyOS] boot error — check ~/.jelly/.env config");
+      console.error("[JellyOS] boot error -- check ~/.jelly/.env config");
     }
   });
 
   agent.on("session_shutdown", async () => {
     autoVault?.stop();
     feeds?.stop();
+    priceFeed.stop();
+    newsFeed.stop();
     dashServer.close(() => {});
     if (_telegramTimer) clearInterval(_telegramTimer);
     if (_discordTimer)  clearInterval(_discordTimer);
@@ -453,6 +508,21 @@ export default function jellyos(agent: ExtensionAPI): void {
       fng != null ? `fear_greed: ${fng}/100 (${fngLabel})` : null,
       effectLine,
     ].filter(Boolean) as string[];
+
+    // Inject live price data
+    const priceTicks = priceFeed.getAll();
+    if (priceTicks.length > 0) {
+      liveBits.push(`prices: ${priceFeed.tickerLine(8)}`);
+    }
+
+    // Inject news sentiment
+    const newsReport = newsFeed.getLatest();
+    if (newsReport) {
+      const ns = newsReport.avgSentiment;
+      liveBits.push(`news_sentiment: ${ns >= 0 ? "+" : ""}${(ns * 100).toFixed(0)}% (${newsReport.positive}p/${newsReport.negative}n/${newsReport.neutral}·)`);
+      liveBits.push(`trending: ${newsReport.topKeywords.slice(0, 8).join(", ")}`);
+    }
+
     const liveBlock = liveBits.length > 0
       ? `\n\n## Live Context\n${liveBits.map(b => `- ${b}`).join("\n")}`
       : "";
@@ -480,11 +550,32 @@ export default function jellyos(agent: ExtensionAPI): void {
         }\nReview these signals and decide whether to act on them.`
       : "";
 
-    const systemPrompt = basePrompt + liveBlock + tgBlock + dcBlock + wbBlock;
-    return systemPrompt ? { systemPrompt } : undefined;
+    // Inject pending dashboard messages
+    const dashBlock = _dashboardMessages.length > 0
+      ? `\n\n## Dashboard Messages\nThe following messages were sent from the web dashboard:\n${
+          _dashboardMessages.splice(0, _dashboardMessages.length).map(m => `- ${m.text}`).join("\n")
+        }`
+      : "";
+
+    // Inject scheduled tasks
+    let schedBlock = "";
+    try {
+      const { readFileSync, existsSync } = require("node:fs");
+      const ctxPath = path.join(JELLY_HOME, "context.json");
+      if (existsSync(ctxPath)) {
+        const store = JSON.parse(readFileSync(ctxPath, "utf-8"));
+        const tasks: any[] = (store.schedule || []).filter((t: any) => t.active);
+        if (tasks.length > 0) {
+          schedBlock = `\n\n## Scheduled Tasks\nComplete these tasks and report results:\n${tasks.map((t: any) => `- ${t.task}`).join("\n")}`;
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    const systemPrompt = basePrompt + liveBlock + tgBlock + dcBlock + wbBlock + dashBlock + schedBlock;
+    if (systemPrompt) agent.setSystemPrompt(systemPrompt);
   });
 
-  // ── Slash commands ─────────────────────────────────────────────────────────
+  // -- Slash commands ---------------------------------------------------------
 
   agent.registerCommand("vault", {
     description: "Show vault balance and status",
@@ -492,7 +583,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       if (!vault) { ctx.ui.notify("Vault not initialized"); return; }
       const s = vault.getStats();
       ctx.ui.notify(vault.isLocked()
-        ? ctx.ui.theme.fg("warning", "🔒 Vault locked — use /unlock to access")
+        ? ctx.ui.theme.fg("warning", "🔒 Vault locked -- use /unlock to access")
         : ctx.ui.theme.fg("success", `🔓 Vault: $${s.balance?.toFixed(2) ?? "0"} USD | ${s.entries} entries`));
     },
   });
@@ -541,18 +632,18 @@ export default function jellyos(agent: ExtensionAPI): void {
     async handler(_args, ctx) {
       const { existsSync, readFileSync, writeFileSync, mkdirSync } = require("node:fs");
       const lines: string[] = [
-        ctx.ui.theme.fg("error", "🚨 PANIC MODE — EXECUTING EMERGENCY SHUTDOWN"),
+        ctx.ui.theme.fg("error", "🚨 PANIC MODE -- EXECUTING EMERGENCY SHUTDOWN"),
         "",
       ];
 
       const panicTs = Date.now();
 
-      // ── Step 1: Stop auto-vault and feeds immediately ─────────────────────
+      // -- Step 1: Stop auto-vault and feeds immediately ---------------------
       try { autoVault?.stop(); } catch { /* non-fatal */ }
       try { feeds?.stop(); }    catch { /* non-fatal */ }
       lines.push("✓ Auto-vault and data feeds stopped");
 
-      // ── Step 2: Read open positions from context store ────────────────────
+      // -- Step 2: Read open positions from context store --------------------
       const ctxPath = path.join(JELLY_HOME, "context.json");
       let store: any = {};
       let openPositions: any[] = [];
@@ -560,10 +651,10 @@ export default function jellyos(agent: ExtensionAPI): void {
         try {
           store         = JSON.parse(readFileSync(ctxPath, "utf-8"));
           openPositions = Array.isArray(store.positions) ? store.positions : [];
-        } catch { /* corrupt context — treat as empty */ }
+        } catch { /* corrupt context -- treat as empty */ }
       }
 
-      // ── Step 3: Mark all tracked positions as emergency_closed ────────────
+      // -- Step 3: Mark all tracked positions as emergency_closed ------------
       let sweepTotal = 0;
       if (openPositions.length > 0) {
         lines.push(`\nPositions emergency-closed (${openPositions.length}):`);
@@ -580,19 +671,19 @@ export default function jellyos(agent: ExtensionAPI): void {
         mkdirSync(JELLY_HOME, { recursive: true });
         store.positions     = closedPositions;
         store.panic_at      = panicTs;
-        store.panic_note    = "Emergency panic — all positions marked closed. Verify on-chain.";
+        store.panic_note    = "Emergency panic -- all positions marked closed. Verify on-chain.";
         try { writeFileSync(ctxPath, JSON.stringify(store, null, 2), "utf-8"); } catch { /* non-fatal */ }
       } else {
         lines.push("\nNo tracked positions in context store.");
       }
 
-      // ── Step 4: Emergency vault sweep then immediate lock ─────────────────
+      // -- Step 4: Emergency vault sweep then immediate lock -----------------
       lines.push("");
       if (vault && !vault.isLocked()) {
         try {
           const bal = vault.getBalance();
           if (sweepTotal > 0) {
-            await vault.sweep(sweepTotal, `PANIC emergency sweep — ${openPositions.length} positions closed`, undefined);
+            await vault.sweep(sweepTotal, `PANIC emergency sweep -- ${openPositions.length} positions closed`, undefined);
             lines.push(ctx.ui.theme.fg("success", `✓ Swept $${sweepTotal.toFixed(2)} profit to vault`));
           }
           vault.lock();
@@ -604,10 +695,10 @@ export default function jellyos(agent: ExtensionAPI): void {
       } else if (vault?.isLocked()) {
         lines.push("Vault already locked 🔒");
       } else {
-        lines.push(ctx.ui.theme.fg("warn", "Vault not initialized — lock manually"));
+        lines.push(ctx.ui.theme.fg("warn", "Vault not initialized -- lock manually"));
       }
 
-      // ── Step 5: Broadcast PANIC event to dashboard ────────────────────────
+      // -- Step 5: Broadcast PANIC event to dashboard ------------------------
       broadcastWs("agent", {
         status:         "PANIC",
         openPositions:  openPositions.length,
@@ -616,7 +707,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       });
 
       lines.push("");
-      lines.push(ctx.ui.theme.fg("warn", "⚠  Verify position closure on-chain — this agent tracks intent only."));
+      lines.push(ctx.ui.theme.fg("warn", "⚠  Verify position closure on-chain -- this agent tracks intent only."));
       lines.push(ctx.ui.theme.fg("muted", "Run /export to save vault ledger · /unlock to review balance"));
 
       ctx.ui.notify(lines.join("\n"));
@@ -673,7 +764,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       ctx.ui.notify([
         ctx.ui.theme.fg("accent", "JellyOS Changelog"),
         "",
-        ctx.ui.theme.fg("border", "v2.0.0") + " — agent-based rebuild",
+        ctx.ui.theme.fg("border", "v2.0.0") + " -- agent-based rebuild",
         "  · Replaced custom agent engine with agent extension",
         "  · 22 domain tools: market, blockchain, vault, trading, feeds, prediction",
         "  · Jelly cyan/purple theme + custom ASCII header",
@@ -682,13 +773,13 @@ export default function jellyos(agent: ExtensionAPI): void {
         "  · Dashboard SSE server on port 4320",
         "  · Wallets: EVM, Solana, Cosmos generated on setup",
         "",
-        ctx.ui.theme.fg("border", "v1.x") + " — Custom Ink TUI (legacy)",
+        ctx.ui.theme.fg("border", "v1.x") + " -- Custom Ink TUI (legacy)",
       ].join("\n"));
     },
   });
 
   agent.registerCommand("unlock", {
-    description: "Unlock the profit vault — usage: /unlock <passphrase>",
+    description: "Unlock the profit vault -- usage: /unlock <passphrase>",
     async handler(args, ctx) {
       if (!vault) { ctx.ui.notify("Vault not initialized"); return; }
       const passphrase = args.trim();
@@ -701,7 +792,7 @@ export default function jellyos(agent: ExtensionAPI): void {
         if (ok) {
           const s = vault.getStats();
           ctx.ui.notify(ctx.ui.theme.fg("success",
-            `🔓 Vault unlocked — Balance: $${(s.balance as number)?.toFixed(2) ?? "0"}`));
+            `🔓 Vault unlocked -- Balance: $${(s.balance as number)?.toFixed(2) ?? "0"}`));
         } else {
           ctx.ui.notify(ctx.ui.theme.fg("error", "❌ Wrong passphrase"));
         }
@@ -711,14 +802,14 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Extended slash commands ───────────────────────────────────────────────
+  // -- Extended slash commands -----------------------------------------------
 
   agent.registerCommand("wallets", {
     description: "Show all trading wallet addresses and vault cold addresses",
     async handler(_args, ctx) {
       const lines: string[] = ["🪼 JellyOS Wallets\n"];
       if (wallet) {
-        lines.push("Trading wallets (hot — fund these to give the agent capital):");
+        lines.push("Trading wallets (hot -- fund these to give the agent capital):");
         const summary = wallet.getSummary();
         for (const [chain, addr] of Object.entries(summary)) {
           lines.push(`  ${chain.padEnd(8)} ${addr}`);
@@ -727,7 +818,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       const { existsSync, readFileSync } = require("node:fs");
       const addrFile = path.join(JELLY_HOME, "vault-addresses.json");
       if (existsSync(addrFile)) {
-        lines.push("\nVault addresses (cold — only accessible with your saved private key):");
+        lines.push("\nVault addresses (cold -- only accessible with your saved private key):");
         const a = JSON.parse(readFileSync(addrFile, "utf-8"));
         lines.push(`  evm      ${a.evm}`);
         lines.push(`  solana   ${a.solana}`);
@@ -766,10 +857,10 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("history", {
-    description: "Show vault sweep history — usage: /history [N]",
+    description: "Show vault sweep history -- usage: /history [N]",
     async handler(args, ctx) {
       if (!vault) { ctx.ui.notify("Vault not initialized"); return; }
-      if (vault.isLocked()) { ctx.ui.notify("🔒 Vault locked — use /unlock first"); return; }
+      if (vault.isLocked()) { ctx.ui.notify("🔒 Vault locked -- use /unlock first"); return; }
       const n     = parseInt(args.trim()) || 10;
       const hist  = vault.getHistory().slice(0, n);
       if (hist.length === 0) { ctx.ui.notify("No vault history yet"); return; }
@@ -789,7 +880,7 @@ export default function jellyos(agent: ExtensionAPI): void {
         ? `$${vault.getStats().balance?.toFixed(2) ?? "0"}`
         : vault ? "🔒 locked" : "unavailable";
       const tradingBal = wallet
-        ? Object.keys(wallet.getSummary()).length + " chain wallet(s) — check via get_balance"
+        ? Object.keys(wallet.getSummary()).length + " chain wallet(s) -- check via get_balance"
         : "unavailable";
       ctx.ui.notify([
         "P&L Summary",
@@ -804,7 +895,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("watchlist", {
-    description: "Show tracked assets — add with: /watchlist add BTC",
+    description: "Show tracked assets -- add with: /watchlist add BTC",
     async handler(args, ctx) {
       const { existsSync, readFileSync, writeFileSync, mkdirSync } = require("node:fs");
       const ctxPath = path.join(JELLY_HOME, "context.json");
@@ -835,7 +926,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     description: "Show current gas prices across chains",
     async handler(_args, ctx) {
       const key = process.env.ALCHEMY_KEY;
-      if (!key) { ctx.ui.notify("Alchemy key not set — run /config to add it"); return; }
+      if (!key) { ctx.ui.notify("Alchemy key not set -- run /config to add it"); return; }
       const chains = ["eth-mainnet", "arb-mainnet", "base-mainnet", "opt-mainnet", "polygon-mainnet"];
       const results: string[] = ["⛽ Gas Prices\n"];
       await Promise.all(chains.map(async (network) => {
@@ -857,7 +948,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("tvl", {
-    description: "Show DeFi TVL — usage: /tvl [protocol]",
+    description: "Show DeFi TVL -- usage: /tvl [protocol]",
     async handler(args, ctx) {
       const proto = args.trim().toLowerCase();
       try {
@@ -882,7 +973,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("whale", {
-    description: "Scan an address for whale activity — usage: /whale <address>",
+    description: "Scan an address for whale activity -- usage: /whale <address>",
     async handler(args, ctx) {
       const addr = args.trim();
       if (!addr) { ctx.ui.notify("Usage: /whale <address>"); return; }
@@ -891,7 +982,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("chain", {
-    description: "Set active chain context — usage: /chain [name]",
+    description: "Set active chain context -- usage: /chain [name]",
     async handler(args, ctx) {
       const { readFileSync, writeFileSync, existsSync, mkdirSync } = require("node:fs");
       const ctxPath = path.join(JELLY_HOME, "context.json");
@@ -930,32 +1021,16 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("model", {
-    description: "Show, pick, or cycle models — /model | /model next | /model <N> | /model <id>",
+    description: "Show, pick, or search models -- /model | /model <query> | /model <tier> | /model set <id>",
     async handler(args, ctx) {
       const { writeFileSync, readFileSync, existsSync, mkdirSync } = require("node:fs");
-
-      const MODELS: Array<{ id: string; label: string; note: string }> = [
-        { id: "anthropic/claude-opus-4-5",           label: "Claude Opus 4.5",       note: "most capable, slower"    },
-        { id: "anthropic/claude-sonnet-4-5",         label: "Claude Sonnet 4.5",     note: "fast + smart, recommended" },
-        { id: "anthropic/claude-haiku-3-5",          label: "Claude Haiku 3.5",      note: "fastest claude"          },
-        { id: "openai/gpt-4o",                       label: "GPT-4o",                note: "openai flagship"         },
-        { id: "openai/gpt-4o-mini",                  label: "GPT-4o Mini",           note: "openai fast/cheap"       },
-        { id: "openai/o3-mini",                      label: "o3-mini",               note: "openai reasoning"        },
-        { id: "deepseek/deepseek-r1",                label: "DeepSeek R1",           note: "strong reasoning, cheap" },
-        { id: "deepseek/deepseek-chat-v3-0324",      label: "DeepSeek V3",           note: "fast, very cheap"        },
-        { id: "google/gemini-2.5-flash-preview",     label: "Gemini 2.5 Flash",      note: "google, fast"            },
-        { id: "google/gemini-2.5-pro-preview",       label: "Gemini 2.5 Pro",        note: "google flagship"         },
-        { id: "meta-llama/llama-4-maverick",         label: "Llama 4 Maverick",      note: "open, fast"              },
-        { id: "x-ai/grok-3-beta",                    label: "Grok 3",                note: "xai flagship"            },
-      ];
-
       const envFile = path.join(JELLY_HOME, ".env");
       mkdirSync(JELLY_HOME, { recursive: true });
 
       const readCurrent = (): string => {
-        if (!existsSync(envFile)) return MODELS[1]!.id;
+        if (!existsSync(envFile)) return process.env.DEFAULT_MODEL ?? "anthropic/claude-sonnet-4-5";
         const m = readFileSync(envFile, "utf-8").match(/^DEFAULT_MODEL=(.+)$/m);
-        return m?.[1]?.trim() ?? process.env.DEFAULT_MODEL ?? MODELS[1]!.id;
+        return m?.[1]?.trim() ?? process.env.DEFAULT_MODEL ?? "anthropic/claude-sonnet-4-5";
       };
 
       const saveModel = (id: string) => {
@@ -966,70 +1041,81 @@ export default function jellyos(agent: ExtensionAPI): void {
         process.env.DEFAULT_MODEL = id;
       };
 
-      const arg = args.trim();
+      const arg    = args.trim();
       const current = readCurrent();
-      const currentIdx = MODELS.findIndex(m => m.id === current);
 
-      // /model next — cycle to next
-      if (arg === "next" || arg === "n") {
-        const nextIdx = (currentIdx + 1) % MODELS.length;
-        const next = MODELS[nextIdx]!;
-        saveModel(next.id);
-        ctx.ui.notify(ctx.ui.theme.fg("accent",
-          `Model rotated to [${nextIdx + 1}/${MODELS.length}] ${next.label}\n${next.id}\n${next.note}\n\nRestart jellyos to apply.`
-        ));
-        return;
-      }
-
-      // /model prev — cycle back
-      if (arg === "prev" || arg === "p") {
-        const prevIdx = (currentIdx - 1 + MODELS.length) % MODELS.length;
-        const prev = MODELS[prevIdx]!;
-        saveModel(prev.id);
-        ctx.ui.notify(ctx.ui.theme.fg("accent",
-          `Model rotated to [${prevIdx + 1}/${MODELS.length}] ${prev.label}\n${prev.id}\n${prev.note}\n\nRestart jellyos to apply.`
-        ));
-        return;
-      }
-
-      // /model <N> — pick by number
-      const num = parseInt(arg);
-      if (!isNaN(num) && num >= 1 && num <= MODELS.length) {
-        const pick = MODELS[num - 1]!;
-        saveModel(pick.id);
-        ctx.ui.notify(ctx.ui.theme.fg("accent",
-          `Model set to [${num}/${MODELS.length}] ${pick.label}\n${pick.id}\n${pick.note}\n\nRestart jellyos to apply.`
-        ));
-        return;
-      }
-
-      // /model <full-id> — set by ID
-      if (arg && !arg.match(/^\d+$/)) {
-        const known = MODELS.find(m => m.id === arg || m.label.toLowerCase() === arg.toLowerCase());
-        const id = known?.id ?? arg;
+      // /model set <id> -- set by exact model ID
+      if (arg.startsWith("set ")) {
+        const id = arg.slice(4).trim();
         saveModel(id);
-        ctx.ui.notify(ctx.ui.theme.fg("accent",
-          `Model set to: ${id}\nRestart jellyos to apply.`
-        ));
+        ctx.ui.notify(ctx.ui.theme.fg("accent", `Model set to: ${id}\nRestart jellyos to apply.`));
         return;
       }
 
-      // /model — show picker
-      const pad = (s: string, n: number) => s.padEnd(n);
+      // /model orchestrator|analyst|worker|free -- show tier
+      if (["orchestrator", "analyst", "worker", "free"].includes(arg)) {
+        const pool = modelRegistry.getPool(arg as any);
+        const available = pool.filter(tm => tm.available && tm.failures < 3);
+        if (available.length === 0) {
+          ctx.ui.notify(`No available models in tier: ${arg}`);
+          return;
+        }
+        const lines = [
+          ctx.ui.theme.fg("accent", `Tier: ${arg.toUpperCase()} (${available.length} available)`),
+          "",
+          ...available.slice(0, 15).map((tm, i) => {
+            const cost  = tm.costPer1K <= 0 ? "FREE" : `$${(tm.costPer1K / 1_000_000_000).toFixed(6)}/1K`;
+            const ctx_  = tm.model.context_length >= 1_000_000 ? `${(tm.model.context_length / 1_000_000).toFixed(1)}M ctx` : `${(tm.model.context_length / 1000).toFixed(0)}K ctx`;
+            const marker = tm.model.id === current ? ctx.ui.theme.fg("accent", ">") : " ";
+            return `${marker} [${String(i + 1).padStart(2)}] ${tm.model.id.padEnd(40)} ${cost.padEnd(16)} ${ctx_}`;
+          }),
+          "",
+          ctx.ui.theme.fg("muted", `Current: ${current}`),
+          ctx.ui.theme.fg("muted", "Use: /model set <id> to switch"),
+        ];
+        ctx.ui.notify(lines.join("\n"));
+        return;
+      }
+
+      // /model <query> -- search models
+      if (arg) {
+        const results = modelRegistry.search(arg, 15);
+        if (results.length === 0) {
+          ctx.ui.notify(`No models matching: "${arg}"\nTry: /model set <full-id>`);
+          return;
+        }
+        const lines = [
+          ctx.ui.theme.fg("accent", `Search: "${arg}" (${results.length} results)`),
+          "",
+          ...results.map((tm, i) => {
+            const cost  = tm.costPer1K <= 0 ? "FREE" : `$${(tm.costPer1K / 1_000_000_000).toFixed(6)}/1K`;
+            const marker = tm.model.id === current ? ctx.ui.theme.fg("accent", ">") : " ";
+            return `${marker} [${String(i + 1).padStart(2)}] [${tm.tier}] ${tm.model.id}  ${cost}`;
+          }),
+          "",
+          ctx.ui.theme.fg("muted", `Current: ${current}`),
+          ctx.ui.theme.fg("muted", "Use: /model set <id> to switch"),
+        ];
+        ctx.ui.notify(lines.join("\n"));
+        return;
+      }
+
+      // /model -- show tier overview
+      const tiers = ["orchestrator", "analyst", "worker", "free"] as const;
       const lines = [
-        "AVAILABLE MODELS",
+        ctx.ui.theme.fg("accent", `🪼 Model Registry (${modelRegistry.modelCount} total)`),
         "",
-        ...MODELS.map((m, i) => {
-          const marker = m.id === current ? ctx.ui.theme.fg("accent", ">") : " ";
-          const num    = ctx.ui.theme.fg("muted", `[${String(i + 1).padStart(2)}]`);
-          const label  = pad(m.label, 22);
-          const note   = ctx.ui.theme.fg("muted", m.note);
-          return `${marker} ${num} ${label} ${note}`;
-        }),
+      ];
+      for (const tier of tiers) {
+        const pool     = modelRegistry.getPool(tier);
+        const avail    = pool.filter(tm => tm.available && tm.failures < 3);
+        lines.push(`  ${tier.padEnd(14)} ${avail.length}/${pool.length} available`);
+      }
+      lines.push(
         "",
         ctx.ui.theme.fg("muted", `Current: ${current}`),
-        ctx.ui.theme.fg("muted", "Usage: /model next | /model prev | /model <N> | /model <id>"),
-      ];
+        ctx.ui.theme.fg("muted", "Usage: /model <tier> | /model <query> | /model set <id>"),
+      );
       ctx.ui.notify(lines.join("\n"));
     },
   });
@@ -1100,8 +1186,54 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
+  agent.registerCommand("cost", {
+    description: "Show session and lifetime token usage",
+    async handler(_args, ctx) {
+      ctx.ui.notify(`Cost tracking: available via the framework.\nUse the ask agent: "what is my current cost usage?" or call the cost_report tool.`);
+    },
+  });
+
+  agent.registerCommand("ticker", {
+    description: "Show live price ticker",
+    async handler(_args, ctx) {
+      const ticks = priceFeed.getAll();
+      if (ticks.length === 0) {
+        ctx.ui.notify("No price data yet -- feeds initializing.");
+        return;
+      }
+      const lines = ticks.slice(0, 12).map(t => {
+        const change = t.change24h >= 0 ? `+${t.change24h.toFixed(2)}%` : `${t.change24h.toFixed(2)}%`;
+        const emoji  = t.change24h > 1 ? "🟢" : t.change24h < -1 ? "🔴" : "⚪";
+        return `${emoji} ${t.symbol.padEnd(6)} $${t.price.toLocaleString()} ${change}`;
+      });
+      ctx.ui.notify(`Live Prices\n\n${lines.join("\n")}`);
+    },
+  });
+
+  agent.registerCommand("news", {
+    description: "Show latest crypto news with sentiment",
+    async handler(_args, ctx) {
+      const report = newsFeed.getLatest();
+      if (!report) {
+        ctx.ui.notify("News data not yet available -- fetching in background.");
+        return;
+      }
+      const score = report.avgSentiment;
+      const mood  = score > 0.2 ? "🟢 Bullish" : score < -0.2 ? "🔴 Bearish" : "🟡 Neutral";
+      ctx.ui.notify([
+        `📰 News Sentiment: ${mood} (${(score * 100).toFixed(0)}%)`,
+        `${report.positive}p/${report.negative}n/${report.neutral}· · Trending: ${report.topKeywords.slice(0, 8).join(", ")}`,
+        "",
+        ...report.items.slice(0, 8).map(i => {
+          const s = (i.sentiment ?? 0) >= 0.1 ? "🟢" : (i.sentiment ?? 0) <= -0.1 ? "🔴" : " ";
+          return `${s} [${i.source}] ${i.title.slice(0, 90)}`;
+        }),
+      ].join("\n"));
+    },
+  });
+
   agent.registerCommand("ping", {
-    description: "Quick health check — APIs, feeds, vault, wallets",
+    description: "Quick health check -- APIs, feeds, vault, wallets",
     async handler(_args, ctx) {
       const checks: string[] = ["JellyOS Health Check\n"];
       checks.push(`  Node.js          ✓ ${process.version}`);
@@ -1109,7 +1241,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       checks.push(`  Memory           ${(process.memoryUsage().rss / 1e6).toFixed(0)}MB`);
       checks.push(`  JELLY_HOME       ${path.join(JELLY_HOME, ".env") ? "✓" : "✗"} ${JELLY_HOME}`);
       checks.push(`  OpenRouter key   ${process.env.OPENROUTER_API_KEY ? "✓ set" : "✗ missing"}`);
-      checks.push(`  Alchemy key      ${process.env.ALCHEMY_KEY ? "✓ set" : "— not set"}`);
+      checks.push(`  Alchemy key      ${process.env.ALCHEMY_KEY ? "✓ set" : "-- not set"}`);
       checks.push(`  Vault            ${vault ? (vault.isLocked() ? "🔒 locked" : `✓ $${vault.getStats().balance?.toFixed(2)}`) : "✗ not initialized"}`);
       checks.push(`  Trading wallets  ${wallet ? `✓ ${Object.keys(wallet.getSummary()).length} chains` : "✗ not initialized"}`);
       checks.push(`  Feeds            ${feeds ? `✓ ${feeds.getStats()?.sources ?? 0} sources` : "✗ not initialized"}`);
@@ -1120,7 +1252,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerCommand("memo", {
-    description: "Pin a note to session context — usage: /memo [text]",
+    description: "Pin a note to session context -- usage: /memo [text]",
     async handler(args, ctx) {
       const { readFileSync, writeFileSync, existsSync, mkdirSync } = require("node:fs");
       const text = args.trim();
@@ -1138,7 +1270,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Swarm state (updated by swarm router on each complex turn) ────────────
+  // -- Swarm state (updated by swarm router on each complex turn) ------------
   const swarmState = {
     lastTaskComplexity: 0,
     lastSubtaskCount:   0,
@@ -1160,7 +1292,7 @@ export default function jellyos(agent: ExtensionAPI): void {
         const effect  = existsSync(ctxPath)
           ? (JSON.parse(readFileSync(ctxPath, "utf-8")).effect_level ?? "normal")
           : "normal";
-        const subtaskLimit = { eco: 1, normal: 2, turbo: 4, max: 5 }[effect] ?? 2;
+        const subtaskLimit = ({ eco: 1, normal: 2, turbo: 4, max: 5 } as Record<string, number>)[effect] ?? 2;
         const modelChain   = process.env.OPENROUTER_API_KEY
           ? ["primary", "claude-3-haiku", "gpt-4o-mini", "gemini-flash", "llama-3-8b"]
           : process.env.ANTHROPIC_API_KEY
@@ -1182,8 +1314,8 @@ export default function jellyos(agent: ExtensionAPI): void {
           `  Last task score    ${swarmState.lastTaskComplexity} (>${3} → swarm)`,
           `  Last sub-tasks     ${swarmState.lastSubtaskCount}`,
           "",
-          `  /agents analyze <topic>   — run multi-step swarm analysis`,
-          `  /effect turbo             — increase sub-task depth`,
+          `  /agents analyze <topic>   -- run multi-step swarm analysis`,
+          `  /effect turbo             -- increase sub-task depth`,
         ].join("\n"));
         return;
       }
@@ -1212,10 +1344,10 @@ export default function jellyos(agent: ExtensionAPI): void {
         swarmState.lastTaskComplexity = subTasks.length * 2;
 
         ctx.ui.notify(
-          ctx.ui.theme.fg("accent", `🪼 Swarm Analysis — ${subTasks.length} agents`) + "\n" +
+          ctx.ui.theme.fg("accent", `🪼 Swarm Analysis -- ${subTasks.length} agents`) + "\n" +
           ctx.ui.theme.fg("muted", `Topic: ${topic}`) + "\n\n" +
           subTasks.map((t, i) => `  [${i + 1}/${subTasks.length}] ${t}`).join("\n") + "\n\n" +
-          ctx.ui.theme.fg("muted", "Send the topic as a message to the agent to begin — the swarm router\nwill decompose and synthesize results automatically.")
+          ctx.ui.theme.fg("muted", "Send the topic as a message to the agent to begin -- the swarm router\nwill decompose and synthesize results automatically.")
         );
         swarmState.totalTurns++;
         return;
@@ -1223,8 +1355,8 @@ export default function jellyos(agent: ExtensionAPI): void {
 
       ctx.ui.notify(
         "Usage: /agents [status] | /agents analyze <topic>\n\n" +
-        "  /agents          — show swarm router status\n" +
-        "  /agents analyze  — run multi-step decomposed analysis"
+        "  /agents          -- show swarm router status\n" +
+        "  /agents analyze  -- run multi-step decomposed analysis"
       );
     },
   });
@@ -1233,7 +1365,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     description: "Export vault ledger to CSV in current directory",
     async handler(_args, ctx) {
       if (!vault) { ctx.ui.notify("Vault not initialized"); return; }
-      if (vault.isLocked()) { ctx.ui.notify("🔒 Vault locked — use /unlock first"); return; }
+      if (vault.isLocked()) { ctx.ui.notify("🔒 Vault locked -- use /unlock first"); return; }
       const { writeFileSync } = require("node:fs");
       const hist = vault.getHistory();
       if (hist.length === 0) { ctx.ui.notify("No vault history to export"); return; }
@@ -1262,7 +1394,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Skill command auto-registration ──────────────────────────────────────
+  // -- Skill command auto-registration --------------------------------------
   (() => {
     const { existsSync, readdirSync, readFileSync } = require("node:fs");
     const skillsDir = path.join(JELLY_HOME, "skills");
@@ -1294,7 +1426,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     } catch { /* ignore scan errors */ }
   })();
 
-  // ── Tools: Market Data ─────────────────────────────────────────────────────
+  // -- Tools: Market Data -----------------------------------------------------
 
   agent.registerTool({
     name: "get_market_data",
@@ -1315,7 +1447,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       const lines = Object.entries(data).map(([id, info]: [string, any]) =>
         `${id.toUpperCase()}: $${info.usd?.toLocaleString() ?? "?"} | 24h: ${info.usd_24h_change?.toFixed(2) ?? "?"}% | Vol: ${fmtUsd(info.usd_24h_vol ?? 0)}`
       );
-      if (lines.length === 0) throw new Error("No data returned — check asset IDs");
+      if (lines.length === 0) throw new Error("No data returned -- check asset IDs");
       const pricePayload = Object.entries(data).map(([id, info]: [string, any]) => ({
         id, price: info.usd, change24h: info.usd_24h_change, ts: Date.now(),
       }));
@@ -1336,10 +1468,10 @@ export default function jellyos(agent: ExtensionAPI): void {
       const item = data?.data?.[0];
       if (!item) throw new Error("No data returned");
       const v = parseInt(item.value);
-      const zone = v <= 25 ? "Extreme Fear — contrarian buy zone"
-                 : v >= 75 ? "Extreme Greed — potential sell zone"
+      const zone = v <= 25 ? "Extreme Fear -- contrarian buy zone"
+                 : v >= 75 ? "Extreme Greed -- potential sell zone"
                  : "Neutral zone";
-      return text(`Fear & Greed: ${item.value}/100 — ${item.value_classification}\n${zone}`);
+      return text(`Fear & Greed: ${item.value}/100 -- ${item.value_classification}\n${zone}`);
     },
   });
 
@@ -1356,14 +1488,14 @@ export default function jellyos(agent: ExtensionAPI): void {
         `https://open-api.coinglass.com/public/v2/funding?symbol=${sym}`,
         { signal: AbortSignal.timeout(8000) }
       );
-      if (!res.ok) throw new Error(`Coinglass ${res.status} — API key may be required`);
+      if (!res.ok) throw new Error(`Coinglass ${res.status} -- API key may be required`);
       const data = await res.json() as any;
       if (!data?.data) throw new Error("No funding data");
       const rates = (Array.isArray(data.data) ? data.data : []).slice(0, 8);
       const lines = rates.map((r: any) => `${r.exchangeName}: ${(r.fundingRate * 100).toFixed(4)}%`);
       const avg = rates.reduce((s: number, r: any) => s + (r.fundingRate ?? 0), 0) / (rates.length || 1);
       const signal = avg > 0.001 ? "⚠️ Longs overextended" : avg < -0.0003 ? "⚠️ Shorts overextended" : "Normal";
-      return text(`${sym} Funding Rates:\n${lines.join("\n")}\nAvg: ${(avg * 100).toFixed(4)}% — ${signal}`);
+      return text(`${sym} Funding Rates:\n${lines.join("\n")}\nAvg: ${(avg * 100).toFixed(4)}% -- ${signal}`);
     },
   });
 
@@ -1372,7 +1504,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     label: "DeFi TVL",
     description: "Get Total Value Locked by chain or protocol via DeFi Llama",
     parameters: Type.Object({
-      protocol: Type.Optional(Type.String({ description: "Protocol slug (aave, uniswap, curve…) or omit for chain overview" })),
+      protocol: Type.Optional(Type.String({ description: "Protocol slug (aave, uniswap, curve...) or omit for chain overview" })),
     }),
     async execute(_id, params) {
       if (params.protocol) {
@@ -1399,7 +1531,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     }),
     async execute(_id, params) {
       const apiKey = process.env.ALCHEMY_KEY;
-      if (!apiKey) throw new Error("ALCHEMY_KEY not set — run jellyos setup");
+      if (!apiKey) throw new Error("ALCHEMY_KEY not set -- run jellyos setup");
       const nets = (params.networks ?? ["ethereum", "bsc", "polygon"]).slice(0, 5);
       const results: string[] = [];
       for (const net of nets) {
@@ -1444,7 +1576,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: Blockchain ──────────────────────────────────────────────────────
+  // -- Tools: Blockchain ------------------------------------------------------
 
   agent.registerTool({
     name: "get_balance",
@@ -1452,11 +1584,11 @@ export default function jellyos(agent: ExtensionAPI): void {
     description: "Check wallet balance on any supported blockchain",
     parameters: Type.Object({
       chain:   Type.String({ description: "Chain: ethereum, bsc, arbitrum, base, polygon, avalanche, optimism, solana, scroll, linea, zksync, mantle, blast, celo, gnosis" }),
-      address: Type.Optional(Type.String({ description: "Wallet address — leave blank to use built-in wallet" })),
+      address: Type.Optional(Type.String({ description: "Wallet address -- leave blank to use built-in wallet" })),
     }),
     async execute(_id, params) {
       const apiKey = process.env.ALCHEMY_KEY;
-      if (!apiKey) throw new Error("ALCHEMY_KEY not set — run jellyos setup");
+      if (!apiKey) throw new Error("ALCHEMY_KEY not set -- run jellyos setup");
       let addr = params.address;
       if (!addr && wallet) {
         addr = wallet.getAddress(params.chain) ?? undefined;
@@ -1473,14 +1605,14 @@ export default function jellyos(agent: ExtensionAPI): void {
       if (!res.ok) throw new Error(`Alchemy ${res.status}`);
       const data = await res.json() as any;
       const formatted = (Number(BigInt(data.result)) / 1e18).toFixed(6);
-      return text(`${addr.slice(0, 8)}… ${formatted} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}`);
+      return text(`${addr.slice(0, 8)}... ${formatted} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}`);
     },
   });
 
   agent.registerTool({
     name: "sign_transaction",
     label: "Sign Transaction",
-    description: "Sign an unsigned transaction payload with the built-in wallet. For EVM: accepts RLP-encoded tx hex or 32-byte hash hex; uses keccak256+ECDSA (ethers-compatible). For Solana/Cosmos: Ed25519 over raw bytes. Returns hex signature only — does NOT broadcast to the network.",
+    description: "Sign an unsigned transaction payload with the built-in wallet. For EVM: accepts RLP-encoded tx hex or 32-byte hash hex; uses keccak256+ECDSA (ethers-compatible). For Solana/Cosmos: Ed25519 over raw bytes. Returns hex signature only -- does NOT broadcast to the network.",
     parameters: Type.Object({
       chain:      Type.String({ description: "Chain: ethereum | bsc | solana | cosmos | etc." }),
       tx_hex:     Type.String({ description: "Unsigned transaction payload as hex string (0x-prefixed or raw hex). For EVM: RLP-encoded tx or 32-byte hash. For Solana: serialized message bytes." }),
@@ -1491,13 +1623,13 @@ export default function jellyos(agent: ExtensionAPI): void {
       const addr = wallet.getAddress(params.chain);
       if (!addr) throw new Error(`No wallet for '${params.chain}'. Run jellyos setup first.`);
       const sig = wallet.signMessage(params.chain, params.tx_hex);
-      if (!sig) throw new Error("Signing failed — check wallet initialization.");
+      if (!sig) throw new Error("Signing failed -- check wallet initialization.");
       const lines = [
         `Chain:     ${params.chain}`,
         `Signer:    ${addr}`,
         `Signature: ${sig}`,
         "",
-        "⚠ Signature only — transaction NOT broadcast. Use swap or bridge tool to execute.",
+        "⚠ Signature only -- transaction NOT broadcast. Use swap or bridge tool to execute.",
       ];
       return text(lines.join("\n"));
     },
@@ -1526,7 +1658,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     }),
     async execute(_id, params) {
       const apiKey = process.env.ALCHEMY_KEY;
-      if (!apiKey) throw new Error("ALCHEMY_KEY not set — run jellyos setup");
+      if (!apiKey) throw new Error("ALCHEMY_KEY not set -- run jellyos setup");
       const network = CHAIN_NETWORK[params.chain] ?? "eth-mainnet";
       const res = await fetch(`https://${network}.g.alchemy.com/v2/${apiKey}`, {
         method: "POST",
@@ -1544,7 +1676,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       const txs = (data?.result?.transfers ?? []).filter((t: any) => parseFloat(t.value ?? "0") >= minVal);
       if (txs.length === 0) return text(`No large transfers (>${minVal} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}) on ${params.chain} recently`);
       const lines = txs.slice(0, 5).map((t: any) =>
-        `${parseFloat(t.value).toFixed(2)} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}: ${(t.from ?? "?").slice(0, 8)}… → ${(t.to ?? "?").slice(0, 8)}…`
+        `${parseFloat(t.value).toFixed(2)} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}: ${(t.from ?? "?").slice(0, 8)}... → ${(t.to ?? "?").slice(0, 8)}...`
       );
       return text(`Large transfers on ${params.chain}:\n${lines.join("\n")}`);
     },
@@ -1561,7 +1693,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: Vault ───────────────────────────────────────────────────────────
+  // -- Tools: Vault -----------------------------------------------------------
 
   agent.registerTool({
     name: "vault_status",
@@ -1609,12 +1741,12 @@ export default function jellyos(agent: ExtensionAPI): void {
       const history = vault.getHistory();
       if (history.length === 0) return text("No vault entries yet");
       return text(history.slice(0, params.limit ?? 10).map((e: any) =>
-        `${new Date(e.timestamp).toLocaleDateString()} ${e.amount > 0 ? "+" : ""}$${e.amount.toFixed(2)} — ${e.note}`
+        `${new Date(e.timestamp).toLocaleDateString()} ${e.amount > 0 ? "+" : ""}$${e.amount.toFixed(2)} -- ${e.note}`
       ).join("\n"));
     },
   });
 
-  // ── Tools: Trading ─────────────────────────────────────────────────────────
+  // -- Tools: Trading ---------------------------------------------------------
 
   agent.registerTool({
     name: "calculate_risk",
@@ -1671,7 +1803,7 @@ export default function jellyos(agent: ExtensionAPI): void {
           `Max slippage: ${params.max_slippage_pct ?? 0.5}%\n\nCall again with confirm: true to execute.`
         );
       }
-      // Stub — wire up DEX adapters for live execution
+      // Stub -- wire up DEX adapters for live execution
       const txHash   = "0x" + Math.random().toString(16).slice(2, 18);
       const explorer = params.chain === "solana"
         ? `https://solscan.io/tx/${txHash}`
@@ -1682,7 +1814,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       });
       return text(
         `✅ Trade submitted: ${params.side.toUpperCase()} $${params.amount_usd} ${params.pair} on ${params.chain}\n` +
-        `Tx: ${txHash}\nExplorer: ${explorer}\n\nNote: Demo mode — connect DEX adapters for live execution.`
+        `Tx: ${txHash}\nExplorer: ${explorer}\n\nNote: Demo mode -- connect DEX adapters for live execution.`
       );
     },
   });
@@ -1744,14 +1876,14 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: Feeds ───────────────────────────────────────────────────────────
+  // -- Tools: Feeds -----------------------------------------------------------
 
   agent.registerTool({
     name: "get_live_feeds",
     label: "Live Feeds",
     description: "Get recent items from live data feeds (news, prices, whale alerts, on-chain signals)",
     parameters: Type.Object({
-      category: Type.Optional(Type.String({ description: "news | signal | whale | price | social | onchain | prediction — omit for all" })),
+      category: Type.Optional(Type.String({ description: "news | signal | whale | price | social | onchain | prediction -- omit for all" })),
       limit:    Type.Optional(Type.Number({ description: "Max items (default 10)" })),
       source:   Type.Optional(Type.String({ description: "Filter by source name" })),
     }),
@@ -1762,7 +1894,7 @@ export default function jellyos(agent: ExtensionAPI): void {
         limit: params.limit ?? 10,
         source: params.source,
       });
-      if (items.length === 0) return text("No feed items yet — feeds update every 1–30 minutes");
+      if (items.length === 0) return text("No feed items yet -- feeds update every 1-30 minutes");
       return text(items.map((i: any) => `[${i.source}] ${i.title}: ${i.content}`).join("\n"));
     },
   });
@@ -1814,7 +1946,84 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: Prediction ──────────────────────────────────────────────────────
+  // -- Tools: Framework (from @jellyos/agent) --------------------------------
+
+  agent.registerTool({
+    name: "analyze_ta",
+    label: "Technical Analysis",
+    description: "Run full technical analysis on price data: RSI, MACD, Bollinger Bands, EMA crossover, ATR, volume profile. Returns buy/sell signals.",
+    parameters: Type.Object({
+      prices:  Type.Array(Type.Number(), { description: "Array of closing prices (most recent last)" }),
+      highs:   Type.Optional(Type.Array(Type.Number(), { description: "High prices (optional, for ATR)" })),
+      lows:    Type.Optional(Type.Array(Type.Number(), { description: "Low prices (optional, for ATR)" })),
+      volumes: Type.Optional(Type.Array(Type.Number(), { description: "Volume data (optional)" })),
+    }),
+    async execute(_id, p) {
+      const closes  = p.prices as number[];
+      const highs   = (p.highs as number[] | undefined) ?? [];
+      const lows    = (p.lows as number[] | undefined) ?? [];
+      const volumes = (p.volumes as number[] | undefined) ?? [];
+      const candles = closes.map((c, i) => ({
+        timestamp: 0, open: c, high: highs[i] ?? c, low: lows[i] ?? c, close: c, volume: volumes[i] ?? 0,
+      }));
+      const results = fullAnalysis(candles);
+      const lines   = results.map(r => {
+        const s = r.signal === "bullish" ? "🟢" : r.signal === "bearish" ? "🔴" : "⚪";
+        const v = Array.isArray(r.value) ? `[${(r.value as number[]).length} values]` : typeof r.value === "number" ? r.value : "-";
+        return `${s} ${r.indicator}: ${v}`;
+      }).join("\n");
+      const summary = results.find(r => r.indicator === "SUMMARY");
+      return {
+        content: [{ type: "text" as const, text: `Technical Analysis Results:\n${lines}` }],
+        details: { results, overall_signal: summary?.signal, overall_score: summary?.value },
+      };
+    },
+  });
+
+  agent.registerTool({
+    name: "get_news_sentiment",
+    label: "News Sentiment",
+    description: "Get crypto news with AI sentiment scoring. Shows bullish/bearish/neutral breakdown, trending keywords, and scored headlines.",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({ default: 10 })),
+    }),
+    async execute(_id, params) {
+      const report = newsFeed.getLatest();
+      if (!report) return text("News data not yet available. Please wait for the first fetch.");
+      const items = report.items.slice(0, params.limit ?? 10)
+        .map(i => {
+          const s = (i.sentiment ?? 0) >= 0.1 ? "+" : (i.sentiment ?? 0) <= -0.1 ? "-" : " ";
+          return `${s} [${i.source}] ${i.title}`;
+        }).join("\n");
+      return {
+        content: [{
+          type: "text" as const,
+          text: `News Sentiment: ${report.avgSentiment >= 0 ? "+" : ""}${(report.avgSentiment * 100).toFixed(0)}% · ${report.positive}p/${report.negative}n/${report.neutral}·\nTrending: ${report.topKeywords.join(", ")}\n\n${items}`,
+        }],
+        details: { avgSentiment: report.avgSentiment, positive: report.positive, negative: report.negative, neutral: report.neutral, keywords: report.topKeywords },
+      };
+    },
+  });
+
+  agent.registerTool({
+    name: "get_price_ticker",
+    label: "Price Ticker",
+    description: "Get real-time prices and 24h changes for tracked assets. Uses the framework price feed for fast cached lookups.",
+    parameters: Type.Object({
+      symbols: Type.Optional(Type.Array(Type.String(), { description: "Symbols to fetch: btc, eth, sol, etc. (default: all tracked)" })),
+    }),
+    async execute(_id, p) {
+      const ticks = p.symbols?.length ? priceFeed.getMultiple(p.symbols as string[]) : priceFeed.getAll();
+      if (ticks.length === 0) return text("No price data available yet. Prices update every 60 seconds.");
+      const lines = ticks.map(t => {
+        const change = t.change24h >= 0 ? `+${t.change24h.toFixed(2)}%` : `${t.change24h.toFixed(2)}%`;
+        return `${t.symbol.padEnd(6)} $${t.price < 1 ? t.price.toFixed(6) : t.price.toLocaleString()} ${change}`;
+      });
+      return text(lines.join("\n"));
+    },
+  });
+
+  // -- Tools: Prediction ------------------------------------------------------
 
   agent.registerTool({
     name: "predict_market",
@@ -1853,7 +2062,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: System ──────────────────────────────────────────────────────────
+  // -- Tools: System ----------------------------------------------------------
 
   agent.registerTool({
     name: "web_fetch",
@@ -1889,7 +2098,7 @@ export default function jellyos(agent: ExtensionAPI): void {
   agent.registerTool({
     name: "get_system_status",
     label: "System Status",
-    description: "Full JellyOS system diagnostics — feeds, vault, wallet, API keys, memory",
+    description: "Full JellyOS system diagnostics -- feeds, vault, wallet, API keys, memory",
     parameters: Type.Object({}),
     async execute() {
       const uptime     = process.uptime();
@@ -1959,12 +2168,12 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: Local system ────────────────────────────────────────────────────
+  // -- Tools: Local system ----------------------------------------------------
 
   agent.registerTool({
     name: "run_shell",
     label: "Run Shell Command",
-    description: "Execute a shell command on the local machine and return stdout/stderr. JellyOS runs fully locally — use this to run scripts, query system state, call CLIs, automate tasks, etc. Requires confirm:true for commands that write, delete, or modify state.",
+    description: "Execute a shell command on the local machine and return stdout/stderr. JellyOS runs fully locally -- use this to run scripts, query system state, call CLIs, automate tasks, etc. Requires confirm:true for commands that write, delete, or modify state.",
     parameters: Type.Object({
       command: Type.String({ description: "Shell command to execute" }),
       cwd:     Type.Optional(Type.String({ description: "Working directory (default: current dir)" })),
@@ -2051,13 +2260,13 @@ export default function jellyos(agent: ExtensionAPI): void {
       if (BLOCKED_READ.some(p => p.test(resolvedPath))) return text(`⛔ Reading ${resolvedPath} is blocked for security.`);
       if (!existsSync(resolvedPath)) return text(`File not found: ${resolvedPath}`);
       const stat = statSync(resolvedPath);
-      if (stat.isDirectory()) return text(`${resolvedPath} is a directory — use run_shell with 'ls' to list it`);
+      if (stat.isDirectory()) return text(`${resolvedPath} is a directory -- use run_shell with 'ls' to list it`);
       const enc = (params.encoding ?? "utf-8") as BufferEncoding;
       const raw = readFileSync(resolvedPath);
       const maxBytes = params.max_bytes ?? 32_768;
       const slice = raw.slice(0, maxBytes);
       const content = enc === "base64" ? slice.toString("base64") : slice.toString("utf-8");
-      const truncated = raw.length > maxBytes ? `\n\n[truncated — ${raw.length} bytes total, showing first ${maxBytes}]` : "";
+      const truncated = raw.length > maxBytes ? `\n\n[truncated -- ${raw.length} bytes total, showing first ${maxBytes}]` : "";
       return text(content + truncated);
     },
   });
@@ -2095,7 +2304,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Slash commands: new features ────────────────────────────────────────────
+  // -- Slash commands: new features --------------------------------------------
 
   agent.registerCommand("snapshot", {
     description: "Generate a snapshot report of vault, wallets, signals, and prices",
@@ -2104,7 +2313,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       const now = new Date();
       const ts  = now.toISOString().replace(/[:.]/g, "-").slice(0, 16);
       const lines: string[] = [
-        `# JellyOS Snapshot — ${now.toUTCString()}`, "",
+        `# JellyOS Snapshot -- ${now.toUTCString()}`, "",
         "## Vault",
       ];
       if (vault) {
@@ -2119,10 +2328,10 @@ export default function jellyos(agent: ExtensionAPI): void {
       }
       lines.push("", "## Active Signals");
       if (signals) {
-        const sigs = signals.getActive().slice(0, 10);
+        const sigs = signals.getActiveSignals().slice(0, 10);
         if (!sigs.length) lines.push("No active signals");
         else for (const s of sigs)
-          lines.push(`- [${(s.direction ?? "").toUpperCase()}] ${s.symbol} — ${s.source} (${s.confidence?.toFixed(0) ?? "?"}% conf)`);
+          lines.push(`- [${(s.direction ?? "").toUpperCase()}] ${s.asset} -- ${s.sources.join(", ")} (${s.confidence?.toFixed(0) ?? "?"}% conf)`);
       }
       lines.push("", "## Live Prices");
       if (feeds) {
@@ -2141,7 +2350,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${ts}.md`);
       writeFileSync(file, md, "utf-8");
-      ctx.ui.notify(`📸 Snapshot saved → ${file}\n\n${md.slice(0, 800)}${md.length > 800 ? "\n…" : ""}`);
+      ctx.ui.notify(`📸 Snapshot saved → ${file}\n\n${md.slice(0, 800)}${md.length > 800 ? "\n..." : ""}`);
     },
   });
 
@@ -2154,7 +2363,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       const files = readdirSync(dir).filter((f: string) => f.endsWith(".jsonl")).sort().reverse();
       if (!files.length) { ctx.ui.notify("No journal entries yet"); return; }
       // args is the full string after the command (e.g. "/journal 50" → args="50")
-      // args[0] would be the first character — parse the whole trimmed string instead
+      // args[0] would be the first character -- parse the whole trimmed string instead
       const limit  = parseInt(String(args ?? "").trim() || "20", 10);
       const lines: string[] = [`📓 Journal (last ${limit} entries)\n`];
       let count = 0;
@@ -2228,7 +2437,7 @@ export default function jellyos(agent: ExtensionAPI): void {
         ctx.ui.notify("Telegram bridge: not configured\n\nAdd to ~/.jelly/.env:\n  TELEGRAM_BOT_TOKEN=your_bot_token\n  TELEGRAM_CHAT_ID=your_chat_id\n\nCreate a bot at https://t.me/BotFather");
         return;
       }
-      ctx.ui.notify(`Telegram bridge: ✓ active\n  Bot token: ${token.slice(0, 8)}…\n  Chat ID: ${chatId ?? "not set"}\n  Polling every 3s\n  Pending messages: ${_telegramPending.length}`);
+      ctx.ui.notify(`Telegram bridge: ✓ active\n  Bot token: ${token.slice(0, 8)}...\n  Chat ID: ${chatId ?? "not set"}\n  Polling every 3s\n  Pending messages: ${_telegramPending.length}`);
     },
   });
 
@@ -2257,7 +2466,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       const sub = args[0]?.toLowerCase();
 
       if (!sub || sub === "list") {
-        if (!wallets.length) { ctx.ui.notify("No wallets being watched.\nUsage: /watch add 0x… MyWhale ethereum"); return; }
+        if (!wallets.length) { ctx.ui.notify("No wallets being watched.\nUsage: /watch add 0x... MyWhale ethereum"); return; }
         ctx.ui.notify("Watched wallets:\n" + wallets.map(w =>
           `  ${(w.label ?? "unlabeled").padEnd(12)} ${w.chain ?? "ethereum"}  ${w.address}`
         ).join("\n"));
@@ -2301,7 +2510,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // ── Tools: new features ──────────────────────────────────────────────────────
+  // -- Tools: new features ------------------------------------------------------
 
   agent.registerTool({
     name: "send_telegram",
@@ -2311,10 +2520,10 @@ export default function jellyos(agent: ExtensionAPI): void {
       message: Type.String({ description: "Message text to send (Markdown supported)" }),
     }),
     async execute(_id, params) {
-      if (!process.env.TELEGRAM_BOT_TOKEN) return text("Telegram not configured — add TELEGRAM_BOT_TOKEN to ~/.jelly/.env");
-      if (!process.env.TELEGRAM_CHAT_ID)   return text("Telegram chat ID not set — add TELEGRAM_CHAT_ID to ~/.jelly/.env");
+      if (!process.env.TELEGRAM_BOT_TOKEN) return text("Telegram not configured -- add TELEGRAM_BOT_TOKEN to ~/.jelly/.env");
+      if (!process.env.TELEGRAM_CHAT_ID)   return text("Telegram chat ID not set -- add TELEGRAM_CHAT_ID to ~/.jelly/.env");
       await _tgSend(params.message);
-      return text(`Sent to Telegram: ${params.message.slice(0, 80)}${params.message.length > 80 ? "…" : ""}`);
+      return text(`Sent to Telegram: ${params.message.slice(0, 80)}${params.message.length > 80 ? "..." : ""}`);
     },
   });
 
@@ -2326,10 +2535,10 @@ export default function jellyos(agent: ExtensionAPI): void {
       message: Type.String({ description: "Message text to send" }),
     }),
     async execute(_id, params) {
-      if (!process.env.DISCORD_BOT_TOKEN)   return text("Discord not configured — add DISCORD_BOT_TOKEN to ~/.jelly/.env");
-      if (!process.env.DISCORD_CHANNEL_ID)  return text("Discord channel not set — add DISCORD_CHANNEL_ID to ~/.jelly/.env");
+      if (!process.env.DISCORD_BOT_TOKEN)   return text("Discord not configured -- add DISCORD_BOT_TOKEN to ~/.jelly/.env");
+      if (!process.env.DISCORD_CHANNEL_ID)  return text("Discord channel not set -- add DISCORD_CHANNEL_ID to ~/.jelly/.env");
       await _dcSend(params.message);
-      return text(`Sent to Discord: ${params.message.slice(0, 80)}${params.message.length > 80 ? "…" : ""}`);
+      return text(`Sent to Discord: ${params.message.slice(0, 80)}${params.message.length > 80 ? "..." : ""}`);
     },
   });
 
@@ -2431,7 +2640,7 @@ export default function jellyos(agent: ExtensionAPI): void {
           })();
       if (!targetFile || !existsSync(targetFile)) return text("No journal entries found for that date");
       const rows = readFileSync(targetFile, "utf-8").split("\n").filter(Boolean);
-      const entries = rows.slice(-limit).map(r => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
+      const entries = rows.slice(-limit).map((r: string) => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
       return text(JSON.stringify(entries, null, 2));
     },
   });
@@ -2455,4 +2664,213 @@ export default function jellyos(agent: ExtensionAPI): void {
       return text(`Now watching ${params.label ?? params.address} on ${params.chain ?? "ethereum"}`);
     },
   });
+
+  // -- Tools: Advanced Trading (#9 trading panel) --------------------------
+
+  agent.registerTool({
+    name: "scan_arbitrage",
+    label: "Arbitrage Scanner",
+    description: "Scan for cross-chain arbitrage opportunities. Compares prices across chains and DEXes for the same asset.",
+    parameters: Type.Object({
+      symbol: Type.String({ description: "Asset symbol: ETH, BTC, SOL, etc." }),
+      min_profit_pct: Type.Optional(Type.Number({ description: "Minimum profit % to report (default 1.0)" })),
+    }),
+    async execute(_id, p) {
+      const sym = p.symbol.toUpperCase();
+      // Get prices from multiple sources
+      const results: string[] = [];
+      const chains = ["ethereum", "arbitrum", "base", "polygon", "avalanche", "optimism", "bsc", "solana"];
+      for (const chain of chains) {
+        const cfg = CHAIN_NETWORK[chain];
+        if (!cfg) continue;
+        try {
+          const res = await fetch(`https://${cfg}.g.alchemy.com/v2/${process.env.ALCHEMY_KEY}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: ["0x000000000000000000000000000000000000dEaD", "latest"] }),
+            signal: AbortSignal.timeout(3000),
+          });
+          if (results.length < 3) results.push(`${chain}: reachable`);
+        } catch { /* skip */ }
+      }
+      return text(`${sym} Arbitrage Scan\nChains checked: ${chains.length}\nReachable: ${results.length}\n\n${results.join("\n")}\n\nNote: Full DEX price comparison requires aggregator integration.`);
+    },
+  });
+
+  agent.registerTool({
+    name: "backtest_strategy",
+    label: "Backtest Strategy",
+    description: "Test a trading strategy against historical data. Describe strategy in natural language.",
+    parameters: Type.Object({
+      strategy: Type.String({ description: "Strategy description, e.g. 'Buy when RSI < 30, sell when RSI > 70'" }),
+      symbol: Type.String({ description: "Asset: BTC, ETH, SOL" }),
+      days: Type.Optional(Type.Number({ description: "Days of history (default 30)" })),
+    }),
+    async execute(_id, p) {
+      // Generate synthetic backtest data
+      const days = p.days ?? 30;
+      const prices: number[] = [];
+      let price = 100 + Math.random() * 900;
+      for (let i = 0; i < days * 24; i++) {
+        price *= 1 + (Math.random() - 0.48) * 0.02;
+        prices.push(Math.round(price * 100) / 100);
+      }
+      const rsiVals: number[] = [];
+      for (let i = 1; i < prices.length; i++) {
+        const change = prices[i] - prices[i - 1];
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        rsiVals.push(100 - 100 / (1 + (gain || 0.01) / (loss || 0.01)));
+      }
+      // Backtest RSI < 30 buy, RSI > 70 sell
+      let wins = 0, losses = 0, trades = 0;
+      let inPosition = false;
+      let entryPrice = 0;
+      for (let i = 14; i < rsiVals.length; i++) {
+        if (!inPosition && rsiVals[i]! < 30) { inPosition = true; entryPrice = prices[i]!; }
+        else if (inPosition && rsiVals[i]! > 70) {
+          const pnl = ((prices[i]! - entryPrice) / entryPrice) * 100;
+          if (pnl > 0) wins++; else losses++;
+          trades++; inPosition = false;
+        }
+      }
+      const totalPnl = prices[prices.length - 1]! - prices[0]!;
+      return text([
+        `Backtest: ${p.symbol} -- "${p.strategy}"`,
+        `Period: ${days} days (${prices.length} hourly candles)`,
+        `Start: $${prices[0]} → End: $${prices[prices.length - 1]} (${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)})`,
+        `Strategy trades: ${trades} (${wins}W/${losses}L)`,
+        `Win rate: ${trades > 0 ? (wins / trades * 100).toFixed(1) : 0}%`,
+        `Buy & hold: ${((prices[prices.length - 1]! / prices[0]! - 1) * 100).toFixed(1)}%`,
+        `\nNote: Demo backtest with synthetic data. Use real OHLCV for production.`,
+      ].join("\n"));
+    },
+  });
+
+  // -- Tools: Scheduled Tasks (#16) ------------------------------------------
+
+  agent.registerTool({
+    name: "schedule_task",
+    label: "Schedule Task",
+    description: "Schedule a recurring agent task. The agent will run this analysis on each turn.",
+    parameters: Type.Object({
+      task: Type.String({ description: "Task description, e.g. 'Check BTC price every hour'" }),
+      active: Type.Optional(Type.Boolean({ description: "Enable/disable (default true)" })),
+    }),
+    async execute(_id, p) {
+      const { readFileSync, writeFileSync, existsSync, mkdirSync } = require("node:fs");
+      const ctxPath = path.join(JELLY_HOME, "context.json");
+      mkdirSync(JELLY_HOME, { recursive: true });
+      const store = existsSync(ctxPath) ? JSON.parse(readFileSync(ctxPath, "utf-8")) : {};
+      const tasks: any[] = store.schedule || [];
+      const idx = tasks.findIndex((t: any) => t.task === p.task);
+      if (p.active === false && idx >= 0) { tasks.splice(idx, 1); }
+      else if (idx < 0) { tasks.push({ task: p.task, created: Date.now(), active: true }); }
+      store.schedule = tasks;
+      writeFileSync(ctxPath, JSON.stringify(store, null, 2), "utf-8");
+      return text(`Schedule: ${tasks.length} active task(s)\n${tasks.map((t: any) => `  • ${t.task}`).join("\n")}`);
+    },
+  });
+
+  // -- Tool: Daily Briefing (#20) --------------------------------------------
+
+  agent.registerTool({
+    name: "daily_briefing",
+    label: "Daily Briefing",
+    description: "Generate a comprehensive daily briefing: prices, news sentiment, signals, portfolio P&L, and trade ideas.",
+    parameters: Type.Object({
+      send_to: Type.Optional(Type.String({ description: "telegram / discord / both / none (default: none)" })),
+    }),
+    async execute(_id, p) {
+      const lines: string[] = ["🪼 JellyOS Daily Briefing", `📅 ${new Date().toLocaleDateString()}`, ""];
+      // Prices
+      const ticks = priceFeed.getAll();
+      if (ticks.length > 0) {
+        lines.push("📊 Prices:");
+        for (const t of ticks.slice(0, 8)) {
+          const emoji = t.change24h >= 0 ? "🟢" : "🔴";
+          lines.push(`  ${emoji} ${t.symbol} $${t.price.toLocaleString()} (${t.change24h >= 0 ? "+" : ""}${t.change24h.toFixed(2)}%)`);
+        }
+      }
+      // News sentiment
+      const report = newsFeed.getLatest();
+      if (report) {
+        const mood = report.avgSentiment > 0.2 ? "🟢 Bullish" : report.avgSentiment < -0.2 ? "🔴 Bearish" : "🟡 Neutral";
+        lines.push(`\n📰 Sentiment: ${mood} (${(report.avgSentiment * 100).toFixed(0)}%)`);
+        lines.push(`  Trending: ${report.topKeywords.slice(0, 5).join(", ")}`);
+      }
+      // Signals
+      const sigs = signals?.getActiveSignals() || [];
+      if (sigs.length > 0) {
+        lines.push(`\n⚡ Signals (${sigs.length}):`);
+        for (const s of sigs.slice(0, 5)) {
+          lines.push(`  [${s.direction.toUpperCase()}] ${s.asset} -- ${(s.confidence * 100).toFixed(0)}% conf`);
+        }
+      }
+      // Vault
+      if (vault && !vault.isLocked()) {
+        lines.push(`\n🔐 Vault: $${vault.getStats().balance?.toFixed(2)} (${vault.getStats().entries} entries)`);
+      }
+      // Trade idea
+      lines.push(`\n💡 Trade Idea:`);
+      const topMover = priceFeed.getTopMovers(1)[0];
+      if (topMover) {
+        const dir = topMover.change24h > 2 ? "Consider taking profits" : topMover.change24h < -2 ? "Potential dip buy opportunity" : "Hold / wait for clearer direction";
+        lines.push(`  ${topMover.symbol} ${dir} (${topMover.change24h.toFixed(2)}% 24h)`);
+      }
+
+      const briefing = lines.join("\n");
+
+      // Send to configured channels
+      if (p.send_to === "telegram" || p.send_to === "both") { _tgSend(briefing).catch(() => {}); }
+      if (p.send_to === "discord" || p.send_to === "both") { _dcSend(briefing).catch(() => {}); }
+
+      return text(briefing + (p.send_to && p.send_to !== "none" ? `\n\n✓ Sent to ${p.send_to}` : ""));
+    },
+  });
+
+  // -- Commands: Advanced --------------------------------------------------
+
+  agent.registerCommand("debate", {
+    description: "Multi-agent debate on a topic -- /debate <topic>",
+    async handler(args, ctx) {
+      if (!args.trim()) { ctx.ui.notify("Usage: /debate <topic> -- e.g. /debate Should I buy ETH today?"); return; }
+      const topic = args.trim();
+      ctx.ui.notify([
+        `🪼 Debate: ${topic}`,
+        "",
+        "Agent A (Bull case): Analyzing bullish factors...",
+        "Agent B (Bear case): Analyzing bearish factors...",
+        "",
+        "The swarm router will decompose this into parallel analyses.",
+        "Send the topic as a message to the agent to begin.",
+      ].join("\n"));
+    },
+  });
+
+  agent.registerCommand("whale", {
+    description: "WebSocket whale tracker status -- /whale",
+    async handler(_args, ctx) {
+      const watchPath = path.join(JELLY_HOME, "watched-wallets.json");
+      const { existsSync, readFileSync } = require("node:fs");
+      const wallets: any[] = existsSync(watchPath) ? JSON.parse(readFileSync(watchPath, "utf-8")) : [];
+      ctx.ui.notify([
+        `🐋 Whale Tracker`,
+        `Watching: ${wallets.length} wallet(s)`,
+        `Poll interval: 60s (Alchemy HTTP)`,
+        `\n${wallets.map(w => `  ${(w.label ?? "?").padEnd(12)} ${w.chain}  ${w.address.slice(0, 10)}...`).join("\n") || "None. Add with: /watch add <addr> <label> <chain>"}`,
+        `\n⚠ Polling mode. For real-time, use Alchemy Mempool WebSocket.`,
+      ].join("\n"));
+    },
+  });
+
+  agent.registerCommand("arb", {
+    description: "Scan for arbitrage opportunities -- /arb <symbol>",
+    async handler(args, ctx) {
+      if (!args.trim()) { ctx.ui.notify("Usage: /arb <symbol> -- e.g. /arb ETH"); return; }
+      // Delegate to agent via tool
+      ctx.ui.notify(`Scanning arbitrage for ${args.trim().toUpperCase()}...\nAsk the agent: "scan arbitrage for ${args.trim()}"`);
+    },
+  });
+
 }

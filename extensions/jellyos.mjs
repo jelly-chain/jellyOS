@@ -38,6 +38,7 @@ import * as util from "util";
 var LogLevel, DEFAULT_CONFIG, COLORS, Logger;
 var init_Logger = __esm({
   "src/core/utils/Logger.ts"() {
+    "use strict";
     LogLevel = /* @__PURE__ */ ((LogLevel2) => {
       LogLevel2[LogLevel2["DEBUG"] = 0] = "DEBUG";
       LogLevel2[LogLevel2["INFO"] = 1] = "INFO";
@@ -271,6 +272,7 @@ __export(PositionManager_exports, {
 var PositionStatus, PositionManager;
 var init_PositionManager = __esm({
   "src/trading/PositionManager.ts"() {
+    "use strict";
     init_Logger();
     PositionStatus = /* @__PURE__ */ ((PositionStatus2) => {
       PositionStatus2["OPEN"] = "open";
@@ -411,6 +413,7 @@ __export(Metrics_exports, {
 var DEFAULT_CONFIG2, Metrics;
 var init_Metrics = __esm({
   "src/core/utils/Metrics.ts"() {
+    "use strict";
     DEFAULT_CONFIG2 = {
       enabled: true,
       collectInterval: 6e4,
@@ -580,6 +583,7 @@ __export(PortfolioManager_exports, {
 var PortfolioManager;
 var init_PortfolioManager = __esm({
   "src/trading/PortfolioManager.ts"() {
+    "use strict";
     init_Logger();
     PortfolioManager = class {
       logger;
@@ -680,7 +684,7 @@ var init_PortfolioManager = __esm({
 });
 
 // extensions/jellyos.ts
-import { Type } from "@jellyos/agent";
+import { Type, modelRegistry, priceFeed, newsFeed, fullAnalysis } from "@jellyos/agent";
 import * as os from "node:os";
 import * as path2 from "node:path";
 import { WebSocketServer } from "ws";
@@ -2152,7 +2156,45 @@ dashServer.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "connected", timestamp: Date.now() }));
   ws.on("close", () => wsClients.delete(ws));
   ws.on("error", () => wsClients.delete(ws));
+  ws.on("message", (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+      if (msg.type === "agent_message" && msg.text) {
+        _dashboardMessages.push({ text: String(msg.text), ts: Date.now() });
+        if (_dashboardMessages.length > 50) _dashboardMessages = _dashboardMessages.slice(-50);
+        ws.send(JSON.stringify({ type: "message_queued", id: Date.now() }));
+      } else if (msg.type === "set_effect" && msg.level) {
+        const { writeFileSync: writeFileSync3, readFileSync: readFileSync3, existsSync: existsSync4, mkdirSync: mkdirSync4 } = __require("node:fs");
+        const ctxPath = path2.join(JELLY_HOME, "context.json");
+        mkdirSync4(JELLY_HOME, { recursive: true });
+        const store = existsSync4(ctxPath) ? JSON.parse(readFileSync3(ctxPath, "utf-8")) : {};
+        store.effect_level = msg.level;
+        writeFileSync3(ctxPath, JSON.stringify(store, null, 2), "utf-8");
+        broadcastWs("effect_changed", { level: msg.level });
+        ws.send(JSON.stringify({ type: "effect_set", level: msg.level }));
+      } else if (msg.type === "get_status") {
+        const s = _statusReady ? {
+          vault: _statusV ? _statusV.isLocked() ? "locked" : `$${_statusV.getStats().balance?.toFixed(2) ?? "0"}` : "unavailable",
+          feeds: _statusF?.getStats() ?? null,
+          signals: _statusS?.getActiveSignals().length ?? 0,
+          wallets: _statusW ? Object.keys(_statusW.getSummary()).length : 0,
+          uptime: process.uptime(),
+          models: modelRegistry.modelCount,
+          prices: priceFeed.getAll().length,
+          news: newsFeed.getLatest()?.items.length ?? 0
+        } : { vault: "initializing", uptime: process.uptime() };
+        ws.send(JSON.stringify({ type: "status", data: s }));
+      }
+    } catch {
+    }
+  });
 });
+var _dashboardMessages = [];
+var _statusReady = false;
+var _statusV;
+var _statusF;
+var _statusS;
+var _statusW;
 var _telegramOffset = 0;
 var _telegramPending = [];
 var _discordLastId = "";
@@ -2425,6 +2467,22 @@ function jellyos(agent) {
         feeds.start();
       } catch {
       }
+      try {
+        priceFeed.track("btc", "eth", "sol", "bnb", "matic", "arb", "op", "avax", "link", "uni", "doge", "xrp", "ada", "dot", "atom", "near", "sui", "apt", "pepe", "aave");
+        priceFeed.start();
+        newsFeed.start();
+      } catch {
+      }
+      modelRegistry.initialise().catch(() => {
+      });
+      setTimeout(() => {
+        ctx.ui.setStatus("models", `${modelRegistry.modelCount} models`);
+      }, 2e3);
+      _statusReady = true;
+      _statusV = vault;
+      _statusF = feeds;
+      _statusS = signals;
+      _statusW = wallet;
       if (process.env.TELEGRAM_BOT_TOKEN) {
         _tgPoll();
         _telegramTimer = setInterval(_tgPoll, 3e3);
@@ -2443,6 +2501,8 @@ function jellyos(agent) {
   agent.on("session_shutdown", async () => {
     autoVault?.stop();
     feeds?.stop();
+    priceFeed.stop();
+    newsFeed.stop();
     dashServer.close(() => {
     });
     if (_telegramTimer) clearInterval(_telegramTimer);
@@ -2478,6 +2538,16 @@ function jellyos(agent) {
       fng != null ? `fear_greed: ${fng}/100 (${fngLabel})` : null,
       effectLine
     ].filter(Boolean);
+    const priceTicks = priceFeed.getAll();
+    if (priceTicks.length > 0) {
+      liveBits.push(`prices: ${priceFeed.tickerLine(8)}`);
+    }
+    const newsReport = newsFeed.getLatest();
+    if (newsReport) {
+      const ns = newsReport.avgSentiment;
+      liveBits.push(`news_sentiment: ${ns >= 0 ? "+" : ""}${(ns * 100).toFixed(0)}% (${newsReport.positive}p/${newsReport.negative}n/${newsReport.neutral}\xB7)`);
+      liveBits.push(`trending: ${newsReport.topKeywords.slice(0, 8).join(", ")}`);
+    }
     const liveBlock = liveBits.length > 0 ? `
 
 ## Live Context
@@ -2499,8 +2569,13 @@ ${_webhookSignals.splice(0, _webhookSignals.length).map(
       (s) => `- ${s.action?.toUpperCase()} ${s.ticker} @ $${s.price}`
     ).join("\n")}
 Review these signals and decide whether to act on them.` : "";
-    const systemPrompt = basePrompt + liveBlock + tgBlock + dcBlock + wbBlock;
-    return systemPrompt ? { systemPrompt } : void 0;
+    const dashBlock = _dashboardMessages.length > 0 ? `
+
+## Dashboard Messages
+The following messages were sent from the web dashboard:
+${_dashboardMessages.splice(0, _dashboardMessages.length).map((m) => `- ${m.text}`).join("\n")}` : "";
+    const systemPrompt = basePrompt + liveBlock + tgBlock + dcBlock + wbBlock + dashBlock;
+    if (systemPrompt) agent.setSystemPrompt(systemPrompt);
   });
   agent.registerCommand("vault", {
     description: "Show vault balance and status",
@@ -2978,29 +3053,15 @@ ${tasks.map((t) => `  \u2022 ${JSON.stringify(t)}`).join("\n")}` : "No scheduled
     }
   });
   agent.registerCommand("model", {
-    description: "Show, pick, or cycle models \u2014 /model | /model next | /model <N> | /model <id>",
+    description: "Show, pick, or search models \u2014 /model | /model <query> | /model <tier> | /model set <id>",
     async handler(args, ctx) {
       const { writeFileSync: writeFileSync3, readFileSync: readFileSync3, existsSync: existsSync4, mkdirSync: mkdirSync4 } = __require("node:fs");
-      const MODELS = [
-        { id: "anthropic/claude-opus-4-5", label: "Claude Opus 4.5", note: "most capable, slower" },
-        { id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", note: "fast + smart, recommended" },
-        { id: "anthropic/claude-haiku-3-5", label: "Claude Haiku 3.5", note: "fastest claude" },
-        { id: "openai/gpt-4o", label: "GPT-4o", note: "openai flagship" },
-        { id: "openai/gpt-4o-mini", label: "GPT-4o Mini", note: "openai fast/cheap" },
-        { id: "openai/o3-mini", label: "o3-mini", note: "openai reasoning" },
-        { id: "deepseek/deepseek-r1", label: "DeepSeek R1", note: "strong reasoning, cheap" },
-        { id: "deepseek/deepseek-chat-v3-0324", label: "DeepSeek V3", note: "fast, very cheap" },
-        { id: "google/gemini-2.5-flash-preview", label: "Gemini 2.5 Flash", note: "google, fast" },
-        { id: "google/gemini-2.5-pro-preview", label: "Gemini 2.5 Pro", note: "google flagship" },
-        { id: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick", note: "open, fast" },
-        { id: "x-ai/grok-3-beta", label: "Grok 3", note: "xai flagship" }
-      ];
       const envFile = path2.join(JELLY_HOME, ".env");
       mkdirSync4(JELLY_HOME, { recursive: true });
       const readCurrent = () => {
-        if (!existsSync4(envFile)) return MODELS[1].id;
+        if (!existsSync4(envFile)) return process.env.DEFAULT_MODEL ?? "anthropic/claude-sonnet-4-5";
         const m = readFileSync3(envFile, "utf-8").match(/^DEFAULT_MODEL=(.+)$/m);
-        return m?.[1]?.trim() ?? process.env.DEFAULT_MODEL ?? MODELS[1].id;
+        return m?.[1]?.trim() ?? process.env.DEFAULT_MODEL ?? "anthropic/claude-sonnet-4-5";
       };
       const saveModel = (id) => {
         const content = existsSync4(envFile) ? readFileSync3(envFile, "utf-8") : "";
@@ -3011,75 +3072,73 @@ ${tasks.map((t) => `  \u2022 ${JSON.stringify(t)}`).join("\n")}` : "No scheduled
       };
       const arg = args.trim();
       const current = readCurrent();
-      const currentIdx = MODELS.findIndex((m) => m.id === current);
-      if (arg === "next" || arg === "n") {
-        const nextIdx = (currentIdx + 1) % MODELS.length;
-        const next = MODELS[nextIdx];
-        saveModel(next.id);
-        ctx.ui.notify(ctx.ui.theme.fg(
-          "accent",
-          `Model rotated to [${nextIdx + 1}/${MODELS.length}] ${next.label}
-${next.id}
-${next.note}
-
-Restart jellyos to apply.`
-        ));
-        return;
-      }
-      if (arg === "prev" || arg === "p") {
-        const prevIdx = (currentIdx - 1 + MODELS.length) % MODELS.length;
-        const prev = MODELS[prevIdx];
-        saveModel(prev.id);
-        ctx.ui.notify(ctx.ui.theme.fg(
-          "accent",
-          `Model rotated to [${prevIdx + 1}/${MODELS.length}] ${prev.label}
-${prev.id}
-${prev.note}
-
-Restart jellyos to apply.`
-        ));
-        return;
-      }
-      const num = parseInt(arg);
-      if (!isNaN(num) && num >= 1 && num <= MODELS.length) {
-        const pick = MODELS[num - 1];
-        saveModel(pick.id);
-        ctx.ui.notify(ctx.ui.theme.fg(
-          "accent",
-          `Model set to [${num}/${MODELS.length}] ${pick.label}
-${pick.id}
-${pick.note}
-
-Restart jellyos to apply.`
-        ));
-        return;
-      }
-      if (arg && !arg.match(/^\d+$/)) {
-        const known = MODELS.find((m) => m.id === arg || m.label.toLowerCase() === arg.toLowerCase());
-        const id = known?.id ?? arg;
+      if (arg.startsWith("set ")) {
+        const id = arg.slice(4).trim();
         saveModel(id);
-        ctx.ui.notify(ctx.ui.theme.fg(
-          "accent",
-          `Model set to: ${id}
-Restart jellyos to apply.`
-        ));
+        ctx.ui.notify(ctx.ui.theme.fg("accent", `Model set to: ${id}
+Restart jellyos to apply.`));
         return;
       }
-      const pad = (s, n) => s.padEnd(n);
+      if (["orchestrator", "analyst", "worker", "free"].includes(arg)) {
+        const pool = modelRegistry.getPool(arg);
+        const available = pool.filter((tm) => tm.available && tm.failures < 3);
+        if (available.length === 0) {
+          ctx.ui.notify(`No available models in tier: ${arg}`);
+          return;
+        }
+        const lines2 = [
+          ctx.ui.theme.fg("accent", `Tier: ${arg.toUpperCase()} (${available.length} available)`),
+          "",
+          ...available.slice(0, 15).map((tm, i) => {
+            const cost = tm.costPer1K <= 0 ? "FREE" : `$${(tm.costPer1K / 1e9).toFixed(6)}/1K`;
+            const ctx_ = tm.model.context_length >= 1e6 ? `${(tm.model.context_length / 1e6).toFixed(1)}M ctx` : `${(tm.model.context_length / 1e3).toFixed(0)}K ctx`;
+            const marker = tm.model.id === current ? ctx.ui.theme.fg("accent", ">") : " ";
+            return `${marker} [${String(i + 1).padStart(2)}] ${tm.model.id.padEnd(40)} ${cost.padEnd(16)} ${ctx_}`;
+          }),
+          "",
+          ctx.ui.theme.fg("muted", `Current: ${current}`),
+          ctx.ui.theme.fg("muted", "Use: /model set <id> to switch")
+        ];
+        ctx.ui.notify(lines2.join("\n"));
+        return;
+      }
+      if (arg) {
+        const results = modelRegistry.search(arg, 15);
+        if (results.length === 0) {
+          ctx.ui.notify(`No models matching: "${arg}"
+Try: /model set <full-id>`);
+          return;
+        }
+        const lines2 = [
+          ctx.ui.theme.fg("accent", `Search: "${arg}" (${results.length} results)`),
+          "",
+          ...results.map((tm, i) => {
+            const cost = tm.costPer1K <= 0 ? "FREE" : `$${(tm.costPer1K / 1e9).toFixed(6)}/1K`;
+            const marker = tm.model.id === current ? ctx.ui.theme.fg("accent", ">") : " ";
+            return `${marker} [${String(i + 1).padStart(2)}] [${tm.tier}] ${tm.model.id}  ${cost}`;
+          }),
+          "",
+          ctx.ui.theme.fg("muted", `Current: ${current}`),
+          ctx.ui.theme.fg("muted", "Use: /model set <id> to switch")
+        ];
+        ctx.ui.notify(lines2.join("\n"));
+        return;
+      }
+      const tiers = ["orchestrator", "analyst", "worker", "free"];
       const lines = [
-        "AVAILABLE MODELS",
-        "",
-        ...MODELS.map((m, i) => {
-          const marker = m.id === current ? ctx.ui.theme.fg("accent", ">") : " ";
-          const num2 = ctx.ui.theme.fg("muted", `[${String(i + 1).padStart(2)}]`);
-          const label = pad(m.label, 22);
-          const note = ctx.ui.theme.fg("muted", m.note);
-          return `${marker} ${num2} ${label} ${note}`;
-        }),
+        ctx.ui.theme.fg("accent", `\u{1FABC} Model Registry (${modelRegistry.modelCount} total)`),
+        ""
+      ];
+      for (const tier of tiers) {
+        const pool = modelRegistry.getPool(tier);
+        const avail = pool.filter((tm) => tm.available && tm.failures < 3);
+        lines.push(`  ${tier.padEnd(14)} ${avail.length}/${pool.length} available`);
+      }
+      lines.push(
         "",
         ctx.ui.theme.fg("muted", `Current: ${current}`),
-        ctx.ui.theme.fg("muted", "Usage: /model next | /model prev | /model <N> | /model <id>")
-      ];
+        ctx.ui.theme.fg("muted", "Usage: /model <tier> | /model <query> | /model set <id>")
+      );
       ctx.ui.notify(lines.join("\n"));
     }
   });
@@ -3149,6 +3208,52 @@ ${lines.join("\n")}`);
         }
       }));
       ctx.ui.notify(lines.join("\n"));
+    }
+  });
+  agent.registerCommand("cost", {
+    description: "Show session and lifetime token usage",
+    async handler(_args, ctx) {
+      ctx.ui.notify(`Cost tracking: available via the framework.
+Use the ask agent: "what is my current cost usage?" or call the cost_report tool.`);
+    }
+  });
+  agent.registerCommand("ticker", {
+    description: "Show live price ticker",
+    async handler(_args, ctx) {
+      const ticks = priceFeed.getAll();
+      if (ticks.length === 0) {
+        ctx.ui.notify("No price data yet \u2014 feeds initializing.");
+        return;
+      }
+      const lines = ticks.slice(0, 12).map((t) => {
+        const change = t.change24h >= 0 ? `+${t.change24h.toFixed(2)}%` : `${t.change24h.toFixed(2)}%`;
+        const emoji = t.change24h > 1 ? "\u{1F7E2}" : t.change24h < -1 ? "\u{1F534}" : "\u26AA";
+        return `${emoji} ${t.symbol.padEnd(6)} $${t.price.toLocaleString()} ${change}`;
+      });
+      ctx.ui.notify(`Live Prices
+
+${lines.join("\n")}`);
+    }
+  });
+  agent.registerCommand("news", {
+    description: "Show latest crypto news with sentiment",
+    async handler(_args, ctx) {
+      const report = newsFeed.getLatest();
+      if (!report) {
+        ctx.ui.notify("News data not yet available \u2014 fetching in background.");
+        return;
+      }
+      const score = report.avgSentiment;
+      const mood = score > 0.2 ? "\u{1F7E2} Bullish" : score < -0.2 ? "\u{1F534} Bearish" : "\u{1F7E1} Neutral";
+      ctx.ui.notify([
+        `\u{1F4F0} News Sentiment: ${mood} (${(score * 100).toFixed(0)}%)`,
+        `${report.positive}p/${report.negative}n/${report.neutral}\xB7 \xB7 Trending: ${report.topKeywords.slice(0, 8).join(", ")}`,
+        "",
+        ...report.items.slice(0, 8).map((i) => {
+          const s = (i.sentiment ?? 0) >= 0.1 ? "\u{1F7E2}" : (i.sentiment ?? 0) <= -0.1 ? "\u{1F534}" : " ";
+          return `${s} [${i.source}] ${i.title.slice(0, 90)}`;
+        })
+      ].join("\n"));
     }
   });
   agent.registerCommand("ping", {
@@ -3842,6 +3947,86 @@ Note: Demo mode \u2014 connect DEX adapters for live execution.`
     }
   });
   agent.registerTool({
+    name: "analyze_ta",
+    label: "Technical Analysis",
+    description: "Run full technical analysis on price data: RSI, MACD, Bollinger Bands, EMA crossover, ATR, volume profile. Returns buy/sell signals.",
+    parameters: Type.Object({
+      prices: Type.Array(Type.Number(), { description: "Array of closing prices (most recent last)" }),
+      highs: Type.Optional(Type.Array(Type.Number(), { description: "High prices (optional, for ATR)" })),
+      lows: Type.Optional(Type.Array(Type.Number(), { description: "Low prices (optional, for ATR)" })),
+      volumes: Type.Optional(Type.Array(Type.Number(), { description: "Volume data (optional)" }))
+    }),
+    async execute(_id, p) {
+      const closes = p.prices;
+      const highs = p.highs ?? [];
+      const lows = p.lows ?? [];
+      const volumes = p.volumes ?? [];
+      const candles = closes.map((c, i) => ({
+        timestamp: 0,
+        open: c,
+        high: highs[i] ?? c,
+        low: lows[i] ?? c,
+        close: c,
+        volume: volumes[i] ?? 0
+      }));
+      const results = fullAnalysis(candles);
+      const lines = results.map((r) => {
+        const s = r.signal === "bullish" ? "\u{1F7E2}" : r.signal === "bearish" ? "\u{1F534}" : "\u26AA";
+        const v = Array.isArray(r.value) ? `[${r.value.length} values]` : typeof r.value === "number" ? r.value : "-";
+        return `${s} ${r.indicator}: ${v}`;
+      }).join("\n");
+      const summary = results.find((r) => r.indicator === "SUMMARY");
+      return {
+        content: [{ type: "text", text: `Technical Analysis Results:
+${lines}` }],
+        details: { results, overall_signal: summary?.signal, overall_score: summary?.value }
+      };
+    }
+  });
+  agent.registerTool({
+    name: "get_news_sentiment",
+    label: "News Sentiment",
+    description: "Get crypto news with AI sentiment scoring. Shows bullish/bearish/neutral breakdown, trending keywords, and scored headlines.",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({ default: 10 }))
+    }),
+    async execute(_id, params) {
+      const report = newsFeed.getLatest();
+      if (!report) return text("News data not yet available. Please wait for the first fetch.");
+      const items = report.items.slice(0, params.limit ?? 10).map((i) => {
+        const s = (i.sentiment ?? 0) >= 0.1 ? "+" : (i.sentiment ?? 0) <= -0.1 ? "-" : " ";
+        return `${s} [${i.source}] ${i.title}`;
+      }).join("\n");
+      return {
+        content: [{
+          type: "text",
+          text: `News Sentiment: ${report.avgSentiment >= 0 ? "+" : ""}${(report.avgSentiment * 100).toFixed(0)}% \xB7 ${report.positive}p/${report.negative}n/${report.neutral}\xB7
+Trending: ${report.topKeywords.join(", ")}
+
+${items}`
+        }],
+        details: { avgSentiment: report.avgSentiment, positive: report.positive, negative: report.negative, neutral: report.neutral, keywords: report.topKeywords }
+      };
+    }
+  });
+  agent.registerTool({
+    name: "get_price_ticker",
+    label: "Price Ticker",
+    description: "Get real-time prices and 24h changes for tracked assets. Uses the framework price feed for fast cached lookups.",
+    parameters: Type.Object({
+      symbols: Type.Optional(Type.Array(Type.String(), { description: "Symbols to fetch: btc, eth, sol, etc. (default: all tracked)" }))
+    }),
+    async execute(_id, p) {
+      const ticks = p.symbols?.length ? priceFeed.getMultiple(p.symbols) : priceFeed.getAll();
+      if (ticks.length === 0) return text("No price data available yet. Prices update every 60 seconds.");
+      const lines = ticks.map((t) => {
+        const change = t.change24h >= 0 ? `+${t.change24h.toFixed(2)}%` : `${t.change24h.toFixed(2)}%`;
+        return `${t.symbol.padEnd(6)} $${t.price < 1 ? t.price.toFixed(6) : t.price.toLocaleString()} ${change}`;
+      });
+      return text(lines.join("\n"));
+    }
+  });
+  agent.registerTool({
     name: "predict_market",
     label: "Market Prediction",
     description: "Generate a price prediction for an asset based on signals and sentiment data",
@@ -4130,10 +4315,10 @@ ${msg.trim() || err.message}`);
       }
       lines.push("", "## Active Signals");
       if (signals) {
-        const sigs = signals.getActive().slice(0, 10);
+        const sigs = signals.getActiveSignals().slice(0, 10);
         if (!sigs.length) lines.push("No active signals");
         else for (const s of sigs)
-          lines.push(`- [${(s.direction ?? "").toUpperCase()}] ${s.symbol} \u2014 ${s.source} (${s.confidence?.toFixed(0) ?? "?"}% conf)`);
+          lines.push(`- [${(s.direction ?? "").toUpperCase()}] ${s.asset} \u2014 ${s.sources.join(", ")} (${s.confidence?.toFixed(0) ?? "?"}% conf)`);
       }
       lines.push("", "## Live Prices");
       if (feeds) {

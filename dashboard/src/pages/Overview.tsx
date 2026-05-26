@@ -17,10 +17,10 @@ function generateSparkline(base: number, points = 20, volatility = 0.02): DataPo
 }
 
 const STAT_CARDS = [
-  { label: 'Total Portfolio', key: 'portfolio', prefix: '$', color: '#FFD700', base: 24831 },
-  { label: 'P&L Today', key: 'pnl', prefix: '$', color: '#22c55e', base: 312 },
-  { label: 'Active Trades', key: 'trades', color: '#4a9eff', base: 3 },
-  { label: 'Win Rate', key: 'winrate', suffix: '%', color: '#a78bfa', base: 68 },
+  { label: 'Vault Balance', key: 'vault', prefix: '$', color: '#FFD700', live: (s: any) => s.vaultBalance || 0 },
+  { label: 'Active Signals', key: 'signals', color: '#22c55e', live: (s: any) => s.signals?.length || 0 },
+  { label: 'Tracked Prices', key: 'prices', color: '#4a9eff', base: 0 },
+  { label: 'News Sentiment', key: 'news', suffix: '%', color: '#a78bfa', base: 50 },
 ];
 
 const CHAIN_BADGES = ['ETH', 'BNB', 'ARB', 'SOL', 'POL', 'AVAX', 'OP', 'BASE'];
@@ -53,6 +53,9 @@ export const Overview: React.FC<OverviewProps> = ({ stream }) => {
   }, []);
 
   const recentEvents = stream.events.slice(0, 8);
+  // Pick tracked prices from recent feed events
+  const priceFeeds = (stream.recentFeeds || []).filter((f: any) => f.metadata?.price || f.price).slice(0, 8);
+  const newsSentiment = stream.agentStatus?.news > 0 ? 50 + stream.agentStatus.news * 2 : 50;
 
   return (
     <div className="p-6 space-y-6">
