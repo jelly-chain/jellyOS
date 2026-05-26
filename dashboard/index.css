@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gold: #FFD700;
+  --gold-dark: #FFA500;
+  --bg: #0a0a0a;
+  --surface: #111111;
+  --surface2: #161616;
+  --border: #222222;
+  --text: #e0e0e0;
+  --text-muted: #666666;
+  --green: #22c55e;
+  --red: #ef4444;
+  --blue: #4a9eff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
+
+/* Gold glow effect */
+.gold-glow { text-shadow: 0 0 12px rgba(255, 215, 0, 0.6); }
+
+/* Animated border */
+@keyframes border-pulse {
+  0%, 100% { border-color: #222; }
+  50% { border-color: #FFD700; }
+}
+
+.border-pulse { animation: border-pulse 2s ease-in-out infinite; }
+
+/* Thread animation */
+@keyframes thread-flow {
+  0% { transform: translateY(-100%) rotate(var(--angle)); opacity: 0; }
+  20% { opacity: var(--opacity); }
+  80% { opacity: var(--opacity); }
+  100% { transform: translateY(200%) rotate(var(--angle)); opacity: 0; }
+}
+
+.thread {
+  position: absolute;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--gold), transparent);
+  animation: thread-flow linear infinite;
+}
+
+/* Particle */
+@keyframes particle-float {
+  0%, 100% { transform: translateY(0) translateX(0); opacity: 0.4; }
+  50% { transform: translateY(-20px) translateX(10px); opacity: 0.8; }
+}
+
+/* Status dot pulse */
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.dot-pulse { animation: dot-pulse 1.5s ease-in-out infinite; }
+
+/* Chart tooltip */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: #111 !important;
+  border: 1px solid #333 !important;
+  border-radius: 4px !important;
+  color: #e0e0e0 !important;
+}
+
+/* Selection */
+::selection { background: rgba(255, 215, 0, 0.2); }
