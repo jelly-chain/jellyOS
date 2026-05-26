@@ -2,36 +2,46 @@
   "name": "@jellyos/pi-package",
   "version": "2.0.0",
   "description": "JellyOS — AI blockchain analytics and trading agent (standalone, Pi-free)",
-  "keywords": ["blockchain", "trading", "ai", "defi", "crypto", "agent", "jelly"],
+  "keywords": [
+    "blockchain",
+    "trading",
+    "ai",
+    "defi",
+    "crypto",
+    "agent",
+    "jelly"
+  ],
   "bin": {
     "jellyos": "./bin/jellyos",
-    "jelly":   "./bin/jellyos"
+    "jelly": "./bin/jellyos"
   },
   "author": "JellyOS Team",
   "license": "MIT",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
-    "start":      "node bin/jellyos",
-    "setup":      "bash setup.sh",
-    "build":      "echo 'No build step — extension runs via @jellyos/agent at runtime'",
-    "type-check": "npx tsc --noEmit --skipLibCheck --module commonjs --moduleResolution node --esModuleInterop true --target ES2022 --strict false extensions/jellyos.ts"
+    "start": "node bin/jellyos",
+    "setup": "bash setup.sh",
+    "build": "echo 'No build step — extension runs via @jellyos/agent at runtime'",
+    "type-check": "./node_modules/.bin/tsc --noEmit --skipLibCheck --module commonjs --moduleResolution node --esModuleInterop true --target ES2022 --strict true extensions/jellyos.ts"
   },
   "dependencies": {
     "@jellyos/agent": "^0.1.0",
-    "@solana/web3.js":   "^1.78.0",
-    "alchemy-sdk":       "^2.10.0",
-    "argon2":            "^0.44.0",
-    "ethers":            "^6.0.0",
-    "uuid":              "^11.0.0",
-    "ws":                "^8.18.0"
+    "@solana/web3.js": "^1.78.0",
+    "alchemy-sdk": "^2.10.0",
+    "argon2": "^0.44.0",
+    "ethers": "^6.0.0",
+    "uuid": "^11.0.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/node":                     "^20.4.5",
-    "@types/ws":                       "^8.5.13",
-    "@typescript-eslint/eslint-plugin":"^6.2.1",
-    "@typescript-eslint/parser":       "^6.2.1",
-    "esbuild":                         "^0.21.0",
-    "eslint":                          "^8.46.0",
-    "typescript":                      "^5.1.6"
+    "@types/node": "^20.4.5",
+    "@types/ws": "^8.5.13",
+    "@typescript-eslint/eslint-plugin": "^6.2.1",
+    "@typescript-eslint/parser": "^6.2.1",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.46.0",
+    "typescript": "^5.9.3"
   }
 }
