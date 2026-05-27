@@ -204,14 +204,8 @@ export class CheckpointManager {
   }
 
   private calculateHash(data: any): string {
-    const json = JSON.stringify(data);
-    let hash = 0;
-    for (let i = 0; i < json.length; i++) {
-      const char = json.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return hash.toString(36);
+    const crypto = require('crypto');
+    return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
   }
 
   private cleanupOldCheckpoints(): void {

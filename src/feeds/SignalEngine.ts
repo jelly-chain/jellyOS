@@ -106,16 +106,28 @@ export class SignalEngine {
   }
 
   /**
-   * Returns the estimated net PnL across all active signals.
-   * Calculated as: sum of (signal.strength * direction_sign * 100) for active longs/shorts.
-   * AutoVault uses this to decide when to sweep profits.
+   * Returns the net directional score across active signals (-N to +N).
+   * This is NOT real PnL — it is a synthetic confidence-weighted signal summary.
+   * AutoVault should use PositionManager.getStats().totalUnrealizedPnL instead.
    */
   getNetPnL(): number {
     const active = this.getActiveSignals();
     return active.reduce((sum, s) => {
       const sign = s.direction === 'long' ? 1 : s.direction === 'short' ? -1 : 0;
-      return sum + sign * s.strength * 100;
+      return sum + sign * s.strength * s.confidence * 100;
     }, 0);
+  }
+
+  /**
+   * Returns the real PnL from the PositionManager if available.
+   * Falls back to the synthetic signal score above.
+   */
+  getRealPnL(positionManager?: any): number {
+    if (positionManager) {
+      const stats = positionManager.getStats();
+      return stats.totalRealizedPnL + stats.totalUnrealizedPnL;
+    }
+    return this.getNetPnL();
   }
 
   getActiveSignals(asset?: string): TradingSignal[] {
