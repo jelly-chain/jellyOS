@@ -27,7 +27,7 @@
     "type-check": "./node_modules/.bin/tsc --noEmit --skipLibCheck --module commonjs --moduleResolution node --esModuleInterop true --target ES2022 --strict true extensions/jellyos.ts"
   },
   "dependencies": {
-    "@jellyos/agent": "^0.1.0",
+    "@jellyos/agent": "^0.1.4",
     "@solana/web3.js": "^1.78.0",
     "alchemy-sdk": "^2.10.0",
     "argon2": "^0.44.0",
