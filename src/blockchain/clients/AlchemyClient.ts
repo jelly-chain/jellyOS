@@ -1,4 +1,5 @@
 import { Logger } from '../../core/utils/Logger';
+import { isAlchemySupported } from '../../core/ChainConfig';
 
 export interface AlchemyConfig {
   apiKey: string;
@@ -131,12 +132,6 @@ export class AlchemyClient {
   }
 
   supportsChain(networkName: string): boolean {
-    const supportedNetworks = [
-      'ethereum', 'arbitrum', 'base', 'optimism', 'polygon', 'avalanche',
-      'fantom', 'cronos', 'bsc', 'celo', 'gnosis', 'scroll', 'linea', 'zksync',
-      'mantle', 'blast', 'berachain', 'opbnb', 'polygonzkevm', 'metis',
-      'rootstock', 'sei', 'sonic'
-    ];
-    return supportedNetworks.includes(networkName.toLowerCase());
+    return isAlchemySupported(networkName.toLowerCase());
   }
 }

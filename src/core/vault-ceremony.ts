@@ -21,34 +21,61 @@ export interface VaultAddresses {
 interface RawPair {
   address: string;
   privateKey: string;
+  /** Original crypto key objects so we can zero the underlying buffers. */
+  keyObject?: { export: (opts: any) => Buffer;
+    asymmetricKeyType?: string;
+    type?: string;
+    [key: string]: any;
+  };
+  edKeyObject?: { export: (opts: any) => Buffer;
+    asymmetricKeyType?: string;
+    type?: string;
+    [key: string]: any;
+  };
+}
+
+function zeroBuffer(buf: Buffer): void {
+  buf.fill(0);
 }
 
 function generateEvmPair(): RawPair {
   const ecdh = crypto.createECDH('secp256k1');
   ecdh.generateKeys();
-  const privHex  = ecdh.getPrivateKey('hex');
+  const privBuf = ecdh.getPrivateKey(); // Buffer, zeroable
   const pubBytes = ecdh.getPublicKey();
   const hash     = crypto.createHash('sha256').update(pubBytes.slice(1)).digest();
   const address  = '0x' + hash.slice(-20).toString('hex');
+  const privHex  = privBuf.toString('hex');
+  zeroBuffer(privBuf);
   return { address, privateKey: '0x' + privHex };
 }
 
 function generateSolanaPair(): RawPair {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const pubDer  = (publicKey  as any).export({ type: 'spki',  format: 'der' }) as Buffer;
-  const privDer = (privateKey as any).export({ type: 'pkcs8', format: 'der' }) as Buffer;
-  const pubRaw  = pubDer.slice(-32);
+  const pubDer  = publicKey.export({ type: 'spki',  format: 'der' }) as Buffer;
+  const privDer = privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer;
+  const pubRaw  = Buffer.from(pubDer.slice(-32));
   const address = pubRaw.toString('base64url');
-  return { address, privateKey: privDer.toString('hex') };
+  const privHex = privDer.toString('hex');
+  // Zero the DER buffers which contain raw scalar bytes
+  zeroBuffer(pubDer);
+  zeroBuffer(privDer);
+  zeroBuffer(pubRaw);
+  // Create new Buffer copies so zeroing the originals doesn't corrupt our hex string
+  return { address, privateKey: privHex };
 }
 
 function generateCosmosPair(): RawPair {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const pubDer  = (publicKey  as any).export({ type: 'spki',  format: 'der' }) as Buffer;
-  const privDer = (privateKey as any).export({ type: 'pkcs8', format: 'der' }) as Buffer;
-  const pubRaw  = pubDer.slice(-32);
+  const pubDer  = publicKey.export({ type: 'spki',  format: 'der' }) as Buffer;
+  const privDer = privateKey.export({ type: 'pkcs8', format: 'der' }) as Buffer;
+  const pubRaw  = Buffer.from(pubDer.slice(-32));
   const address = 'cosmos1' + pubRaw.toString('hex').slice(0, 38);
-  return { address, privateKey: privDer.toString('hex') };
+  const privHex = privDer.toString('hex');
+  zeroBuffer(pubDer);
+  zeroBuffer(privDer);
+  zeroBuffer(pubRaw);
+  return { address, privateKey: privHex };
 }
 
 function ask(prompt: string): Promise<string> {
@@ -117,10 +144,13 @@ export async function runVaultCeremony(jellyHome: string): Promise<VaultAddresse
     }
   }
 
-  // Best-effort zero: reassign references (JS GC will handle actual memory)
+  // Best-effort zero: the underlying crypto Buffers were already zeroed
+  // above. Now zero the hex string copies and dereference.
   evm.privateKey  = '0'.repeat(evm.privateKey.length);
   sol.privateKey  = '0'.repeat(sol.privateKey.length);
   cos.privateKey  = '0'.repeat(cos.privateKey.length);
+  evm.keyObject = sol.keyObject = cos.keyObject = undefined;
+  evm.edKeyObject = sol.edKeyObject = cos.edKeyObject = undefined;
 
   const addresses: VaultAddresses = {
     evm: evm.address,

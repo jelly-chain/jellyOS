@@ -14,11 +14,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
-    "baseUrl": ".",
-    "allowSyntheticDefaultImports": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "ignoreDeprecations": "6.0",
+    "types": ["node"]
   },
   "include": [
     "src/core/**/*",
@@ -27,19 +24,11 @@
     "src/wallet/**/*",
     "src/blockchain/**/*",
     "src/trading/**/*",
-    "src/prediction/**/*"
+    "src/context/**/*",
+    "src/test/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist",
-    "src/agent",
-    "src/ui",
-    "src/context",
-    "src/middleware",
-    "src/setup",
-    "src/utils",
-    "src/config",
-    "src/test",
-    "src/Index.ts"
+    "dist"
   ]
 }

@@ -23,25 +23,25 @@
   "scripts": {
     "start": "node bin/jellyos",
     "setup": "bash setup.sh",
-    "build": "echo 'No build step — extension runs via @jellyos/agent at runtime'",
-    "type-check": "./node_modules/.bin/tsc --noEmit --skipLibCheck --module commonjs --moduleResolution node --esModuleInterop true --target ES2022 --strict true extensions/jellyos.ts"
+    "build": "tsc --project tsconfig.json",
+    "type-check": "tsc --noEmit --skipLibCheck"
   },
   "dependencies": {
     "@jellyos/agent": "^0.1.4",
-    "@solana/web3.js": "^1.78.0",
-    "alchemy-sdk": "^2.10.0",
+    "@solana/web3.js": "^1.98.4",
+    "alchemy-sdk": "^3.6.5",
     "argon2": "^0.44.0",
     "ethers": "^6.0.0",
-    "uuid": "^11.0.0",
-    "ws": "^8.18.0"
+    "uuid": "^14.0.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
-    "@types/node": "^20.4.5",
+    "@types/node": "^25.9.1",
     "@types/ws": "^8.5.13",
-    "@typescript-eslint/eslint-plugin": "^6.2.1",
-    "@typescript-eslint/parser": "^6.2.1",
-    "esbuild": "^0.21.0",
-    "eslint": "^8.46.0",
-    "typescript": "^5.9.3"
+    "@typescript-eslint/eslint-plugin": "^8.60.0",
+    "@typescript-eslint/parser": "^8.60.0",
+    "esbuild": "^0.28.0",
+    "eslint": "^10.4.0",
+    "typescript": "^6.0.3"
   }
 }

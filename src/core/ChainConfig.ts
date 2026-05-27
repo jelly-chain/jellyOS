@@ -27,6 +27,33 @@ export const CHAINS: Record<string, ChainInfo> = {
   blast: { name: 'blast', alchemyNetwork: 'blast-mainnet', symbol: 'ETH', chainId: 81457, enabled: true },
 };
 
+/**
+ * Map of chain key → Alchemy network string.
+ * Derived from CHAINS so it can never drift out of sync.
+ */
+export const ALCHEMY_NETWORKS: Record<string, string> = Object.fromEntries(
+  Object.entries(CHAINS).filter(([, info]) => info.enabled).map(([key, info]) => [key, info.alchemyNetwork])
+);
+
+/**
+ * Set of Alchemy network identifiers that JellyOS supports (derived from CHAINS
+ * plus known Alchemy networks that are supported by the API but not in our
+ * default config here).
+ */
+const EXTRA_ALCHEMY_NETWORKS = new Set([
+  'berachain', 'opbnb', 'polygonzkevm', 'metis', 'rootstock', 'sei', 'sonic',
+]);
+
+/**
+ * Check whether a chain key is supported by Alchemy.
+ * Derives from CHAINS + known extras so it can never drift.
+ */
+export function isAlchemySupported(chain: string): boolean {
+  if (CHAINS[chain]?.enabled) return true;
+  const network = CHAINS[chain]?.alchemyNetwork ?? chain;
+  return EXTRA_ALCHEMY_NETWORKS.has(network);
+}
+
 export const CHAIN_NETWORKS: Record<string, string> = Object.fromEntries(
   Object.entries(CHAINS).map(([key, info]) => [key, info.alchemyNetwork])
 );

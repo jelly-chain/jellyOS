@@ -30,10 +30,11 @@ export class AutoVault {
   private async check(getPnL: () => number): Promise<void> {
     const pnl = getPnL();
     if (pnl >= this.threshold && !this.vault.isLocked()) {
+      const sweepAmount = Math.round(pnl * 100) / 100;
       try {
-        await this.vault.sweep(pnl, `auto-sweep (threshold: $${this.threshold})`);
-        this.logger.info(`Auto-swept $${pnl.toFixed(2)} to vault`);
-        if (this.onSweep) this.onSweep(pnl);
+        await this.vault.sweep(sweepAmount, `auto-sweep P&L $${sweepAmount.toFixed(2)} (threshold: $${this.threshold})`);
+        this.logger.info(`Auto-swept $${sweepAmount.toFixed(2)} to vault`);
+        if (this.onSweep) this.onSweep(sweepAmount);
       } catch (err: any) {
         this.logger.error('Auto-sweep failed', err);
       }

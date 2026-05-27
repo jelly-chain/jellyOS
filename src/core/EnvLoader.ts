@@ -37,21 +37,28 @@ export class EnvLoader {
   private envConfig: EnvConfig = {};
   protected envPath: string;
 
-  constructor(envPath: string = './.env.local') {
-    // Resolve relative to ~/.jellyos/
-    const basePath = resolve(homedir(), '.jellyos');
-    this.envPath = resolve(basePath, envPath);
+  /**
+   * @param envPath  Absolute path, or path relative to ~/.jellyos/.
+   *                 Values starting with '/' or '~' are treated as absolute.
+   */
+  constructor(envPath: string = '.env.local') {
+    if (envPath.startsWith('/') || envPath.startsWith('~')) {
+      this.envPath = resolve(envPath.replace('~', homedir()));
+    } else {
+      this.envPath = resolve(homedir(), '.jellyos', envPath);
+    }
     this.load();
   }
 
-  // Allow specifying a custom base path for testing or special configurations
-  static withBasePath(basePath: string, envPath: string = './.env.local'): EnvLoader {
-    const loader = new EnvLoader(envPath);
-    // Override the computed path - but we need to adjust the constructor logic
-    // Actually simpler: just set this.envPath after super call
-    // But we can't easily override in static factory without modifying constructor
-    // Let's create a separate method
-    return new EnvLoaderWithPath(resolve(basePath, envPath));
+  /**
+   * Create an EnvLoader at an absolute path (for testing, alternate configs).
+   */
+  static atAbsolutePath(absolutePath: string): EnvLoader {
+    const loader = Object.create(EnvLoader.prototype) as EnvLoader;
+    loader.envPath = resolve(absolutePath);
+    (loader as any).envConfig = {};
+    loader.load();
+    return loader;
   }
 
   protected load(): void {
@@ -146,15 +153,6 @@ export class EnvLoader {
 
   reload(): void {
     this.envConfig = {};
-    this.load();
-  }
-}
-
-// Helper class to allow custom base path
-class EnvLoaderWithPath extends EnvLoader {
-  constructor(envPath: string) {
-    super('');
-    this.envPath = envPath;
     this.load();
   }
 }
