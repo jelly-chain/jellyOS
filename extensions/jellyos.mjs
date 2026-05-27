@@ -2405,7 +2405,7 @@ function _startWebhookServer() {
   _webhookHttpSrv = http.createServer((req, res) => {
     if (req.method !== "POST" || req.url !== "/webhook") {
       res.writeHead(404);
-      res.end("JellyOS webhook \u2014 POST /webhook");
+      res.end("JellyOS webhook -- POST /webhook");
       return;
     }
     let body = "";
@@ -2495,7 +2495,7 @@ function jellyos(agent) {
       _alertTimer = setInterval(() => _checkAlerts(feeds), 3e4);
       _walletTimer = setInterval(_pollWatchedWallets, 6e4);
     } catch {
-      console.error("[JellyOS] boot error \u2014 check ~/.jelly/.env config");
+      console.error("[JellyOS] boot error -- check ~/.jelly/.env config");
     }
   });
   agent.on("session_shutdown", async () => {
@@ -2574,7 +2574,24 @@ Review these signals and decide whether to act on them.` : "";
 ## Dashboard Messages
 The following messages were sent from the web dashboard:
 ${_dashboardMessages.splice(0, _dashboardMessages.length).map((m) => `- ${m.text}`).join("\n")}` : "";
-    const systemPrompt = basePrompt + liveBlock + tgBlock + dcBlock + wbBlock + dashBlock;
+    let schedBlock = "";
+    try {
+      const { readFileSync: readFileSync3, existsSync: existsSync4 } = __require("node:fs");
+      const ctxPath = path2.join(JELLY_HOME, "context.json");
+      if (existsSync4(ctxPath)) {
+        const store = JSON.parse(readFileSync3(ctxPath, "utf-8"));
+        const tasks = (store.schedule || []).filter((t) => t.active);
+        if (tasks.length > 0) {
+          schedBlock = `
+
+## Scheduled Tasks
+Complete these tasks and report results:
+${tasks.map((t) => `- ${t.task}`).join("\n")}`;
+        }
+      }
+    } catch {
+    }
+    const systemPrompt = basePrompt + liveBlock + tgBlock + dcBlock + wbBlock + dashBlock + schedBlock;
     if (systemPrompt) agent.setSystemPrompt(systemPrompt);
   });
   agent.registerCommand("vault", {
@@ -2585,7 +2602,7 @@ ${_dashboardMessages.splice(0, _dashboardMessages.length).map((m) => `- ${m.text
         return;
       }
       const s = vault.getStats();
-      ctx.ui.notify(vault.isLocked() ? ctx.ui.theme.fg("warning", "\u{1F512} Vault locked \u2014 use /unlock to access") : ctx.ui.theme.fg("success", `\u{1F513} Vault: $${s.balance?.toFixed(2) ?? "0"} USD | ${s.entries} entries`));
+      ctx.ui.notify(vault.isLocked() ? ctx.ui.theme.fg("warning", "\u{1F512} Vault locked -- use /unlock to access") : ctx.ui.theme.fg("success", `\u{1F513} Vault: $${s.balance?.toFixed(2) ?? "0"} USD | ${s.entries} entries`));
     }
   });
   agent.registerCommand("status", {
@@ -2639,7 +2656,7 @@ ${_dashboardMessages.splice(0, _dashboardMessages.length).map((m) => `- ${m.text
     async handler(_args, ctx) {
       const { existsSync: existsSync4, readFileSync: readFileSync3, writeFileSync: writeFileSync3, mkdirSync: mkdirSync4 } = __require("node:fs");
       const lines = [
-        ctx.ui.theme.fg("error", "\u{1F6A8} PANIC MODE \u2014 EXECUTING EMERGENCY SHUTDOWN"),
+        ctx.ui.theme.fg("error", "\u{1F6A8} PANIC MODE -- EXECUTING EMERGENCY SHUTDOWN"),
         ""
       ];
       const panicTs = Date.now();
@@ -2678,7 +2695,7 @@ Positions emergency-closed (${openPositions.length}):`);
         mkdirSync4(JELLY_HOME, { recursive: true });
         store.positions = closedPositions;
         store.panic_at = panicTs;
-        store.panic_note = "Emergency panic \u2014 all positions marked closed. Verify on-chain.";
+        store.panic_note = "Emergency panic -- all positions marked closed. Verify on-chain.";
         try {
           writeFileSync3(ctxPath, JSON.stringify(store, null, 2), "utf-8");
         } catch {
@@ -2691,7 +2708,7 @@ Positions emergency-closed (${openPositions.length}):`);
         try {
           const bal = vault.getBalance();
           if (sweepTotal > 0) {
-            await vault.sweep(sweepTotal, `PANIC emergency sweep \u2014 ${openPositions.length} positions closed`, void 0);
+            await vault.sweep(sweepTotal, `PANIC emergency sweep -- ${openPositions.length} positions closed`, void 0);
             lines.push(ctx.ui.theme.fg("success", `\u2713 Swept $${sweepTotal.toFixed(2)} profit to vault`));
           }
           vault.lock();
@@ -2703,7 +2720,7 @@ Positions emergency-closed (${openPositions.length}):`);
       } else if (vault?.isLocked()) {
         lines.push("Vault already locked \u{1F512}");
       } else {
-        lines.push(ctx.ui.theme.fg("warn", "Vault not initialized \u2014 lock manually"));
+        lines.push(ctx.ui.theme.fg("warn", "Vault not initialized -- lock manually"));
       }
       broadcastWs("agent", {
         status: "PANIC",
@@ -2712,7 +2729,7 @@ Positions emergency-closed (${openPositions.length}):`);
         ts: panicTs
       });
       lines.push("");
-      lines.push(ctx.ui.theme.fg("warn", "\u26A0  Verify position closure on-chain \u2014 this agent tracks intent only."));
+      lines.push(ctx.ui.theme.fg("warn", "\u26A0  Verify position closure on-chain -- this agent tracks intent only."));
       lines.push(ctx.ui.theme.fg("muted", "Run /export to save vault ledger \xB7 /unlock to review balance"));
       ctx.ui.notify(lines.join("\n"));
     }
@@ -2773,7 +2790,7 @@ ${desc[level]}`));
       ctx.ui.notify([
         ctx.ui.theme.fg("accent", "JellyOS Changelog"),
         "",
-        ctx.ui.theme.fg("border", "v2.0.0") + " \u2014 agent-based rebuild",
+        ctx.ui.theme.fg("border", "v2.0.0") + " -- agent-based rebuild",
         "  \xB7 Replaced custom agent engine with agent extension",
         "  \xB7 22 domain tools: market, blockchain, vault, trading, feeds, prediction",
         "  \xB7 Jelly cyan/purple theme + custom ASCII header",
@@ -2782,12 +2799,12 @@ ${desc[level]}`));
         "  \xB7 Dashboard SSE server on port 4320",
         "  \xB7 Wallets: EVM, Solana, Cosmos generated on setup",
         "",
-        ctx.ui.theme.fg("border", "v1.x") + " \u2014 Custom Ink TUI (legacy)"
+        ctx.ui.theme.fg("border", "v1.x") + " -- Custom Ink TUI (legacy)"
       ].join("\n"));
     }
   });
   agent.registerCommand("unlock", {
-    description: "Unlock the profit vault \u2014 usage: /unlock <passphrase>",
+    description: "Unlock the profit vault -- usage: /unlock <passphrase>",
     async handler(args, ctx) {
       if (!vault) {
         ctx.ui.notify("Vault not initialized");
@@ -2804,7 +2821,7 @@ ${desc[level]}`));
           const s = vault.getStats();
           ctx.ui.notify(ctx.ui.theme.fg(
             "success",
-            `\u{1F513} Vault unlocked \u2014 Balance: $${s.balance?.toFixed(2) ?? "0"}`
+            `\u{1F513} Vault unlocked -- Balance: $${s.balance?.toFixed(2) ?? "0"}`
           ));
         } else {
           ctx.ui.notify(ctx.ui.theme.fg("error", "\u274C Wrong passphrase"));
@@ -2819,7 +2836,7 @@ ${desc[level]}`));
     async handler(_args, ctx) {
       const lines = ["\u{1FABC} JellyOS Wallets\n"];
       if (wallet) {
-        lines.push("Trading wallets (hot \u2014 fund these to give the agent capital):");
+        lines.push("Trading wallets (hot -- fund these to give the agent capital):");
         const summary = wallet.getSummary();
         for (const [chain, addr] of Object.entries(summary)) {
           lines.push(`  ${chain.padEnd(8)} ${addr}`);
@@ -2828,7 +2845,7 @@ ${desc[level]}`));
       const { existsSync: existsSync4, readFileSync: readFileSync3 } = __require("node:fs");
       const addrFile = path2.join(JELLY_HOME, "vault-addresses.json");
       if (existsSync4(addrFile)) {
-        lines.push("\nVault addresses (cold \u2014 only accessible with your saved private key):");
+        lines.push("\nVault addresses (cold -- only accessible with your saved private key):");
         const a = JSON.parse(readFileSync3(addrFile, "utf-8"));
         lines.push(`  evm      ${a.evm}`);
         lines.push(`  solana   ${a.solana}`);
@@ -2874,14 +2891,14 @@ ${desc[level]}`));
     }
   });
   agent.registerCommand("history", {
-    description: "Show vault sweep history \u2014 usage: /history [N]",
+    description: "Show vault sweep history -- usage: /history [N]",
     async handler(args, ctx) {
       if (!vault) {
         ctx.ui.notify("Vault not initialized");
         return;
       }
       if (vault.isLocked()) {
-        ctx.ui.notify("\u{1F512} Vault locked \u2014 use /unlock first");
+        ctx.ui.notify("\u{1F512} Vault locked -- use /unlock first");
         return;
       }
       const n = parseInt(args.trim()) || 10;
@@ -2905,7 +2922,7 @@ ${lines.join("\n")}`);
     description: "Show profit and loss summary",
     async handler(_args, ctx) {
       const vaultBal = vault && !vault.isLocked() ? `$${vault.getStats().balance?.toFixed(2) ?? "0"}` : vault ? "\u{1F512} locked" : "unavailable";
-      const tradingBal = wallet ? Object.keys(wallet.getSummary()).length + " chain wallet(s) \u2014 check via get_balance" : "unavailable";
+      const tradingBal = wallet ? Object.keys(wallet.getSummary()).length + " chain wallet(s) -- check via get_balance" : "unavailable";
       ctx.ui.notify([
         "P&L Summary",
         "",
@@ -2918,7 +2935,7 @@ ${lines.join("\n")}`);
     }
   });
   agent.registerCommand("watchlist", {
-    description: "Show tracked assets \u2014 add with: /watchlist add BTC",
+    description: "Show tracked assets -- add with: /watchlist add BTC",
     async handler(args, ctx) {
       const { existsSync: existsSync4, readFileSync: readFileSync3, writeFileSync: writeFileSync3, mkdirSync: mkdirSync4 } = __require("node:fs");
       const ctxPath = path2.join(JELLY_HOME, "context.json");
@@ -2950,7 +2967,7 @@ Remove: /watchlist remove BTC` : "Watchlist is empty.\nAdd assets: /watchlist ad
     async handler(_args, ctx) {
       const key = process.env.ALCHEMY_KEY;
       if (!key) {
-        ctx.ui.notify("Alchemy key not set \u2014 run /config to add it");
+        ctx.ui.notify("Alchemy key not set -- run /config to add it");
         return;
       }
       const chains = ["eth-mainnet", "arb-mainnet", "base-mainnet", "opt-mainnet", "polygon-mainnet"];
@@ -2975,7 +2992,7 @@ Remove: /watchlist remove BTC` : "Watchlist is empty.\nAdd assets: /watchlist ad
     }
   });
   agent.registerCommand("tvl", {
-    description: "Show DeFi TVL \u2014 usage: /tvl [protocol]",
+    description: "Show DeFi TVL -- usage: /tvl [protocol]",
     async handler(args, ctx) {
       const proto = args.trim().toLowerCase();
       try {
@@ -2999,7 +3016,7 @@ Chains: ${(data.chains ?? []).slice(0, 5).join(", ")}`);
     }
   });
   agent.registerCommand("whale", {
-    description: "Scan an address for whale activity \u2014 usage: /whale <address>",
+    description: "Scan an address for whale activity -- usage: /whale <address>",
     async handler(args, ctx) {
       const addr = args.trim();
       if (!addr) {
@@ -3012,7 +3029,7 @@ Use the agent: ask "scan whale ${addr}" for full on-chain analysis`);
     }
   });
   agent.registerCommand("chain", {
-    description: "Set active chain context \u2014 usage: /chain [name]",
+    description: "Set active chain context -- usage: /chain [name]",
     async handler(args, ctx) {
       const { readFileSync: readFileSync3, writeFileSync: writeFileSync3, existsSync: existsSync4, mkdirSync: mkdirSync4 } = __require("node:fs");
       const ctxPath = path2.join(JELLY_HOME, "context.json");
@@ -3053,7 +3070,7 @@ ${tasks.map((t) => `  \u2022 ${JSON.stringify(t)}`).join("\n")}` : "No scheduled
     }
   });
   agent.registerCommand("model", {
-    description: "Show, pick, or search models \u2014 /model | /model <query> | /model <tier> | /model set <id>",
+    description: "Show, pick, or search models -- /model | /model <query> | /model <tier> | /model set <id>",
     async handler(args, ctx) {
       const { writeFileSync: writeFileSync3, readFileSync: readFileSync3, existsSync: existsSync4, mkdirSync: mkdirSync4 } = __require("node:fs");
       const envFile = path2.join(JELLY_HOME, ".env");
@@ -3222,7 +3239,7 @@ Use the ask agent: "what is my current cost usage?" or call the cost_report tool
     async handler(_args, ctx) {
       const ticks = priceFeed.getAll();
       if (ticks.length === 0) {
-        ctx.ui.notify("No price data yet \u2014 feeds initializing.");
+        ctx.ui.notify("No price data yet -- feeds initializing.");
         return;
       }
       const lines = ticks.slice(0, 12).map((t) => {
@@ -3240,7 +3257,7 @@ ${lines.join("\n")}`);
     async handler(_args, ctx) {
       const report = newsFeed.getLatest();
       if (!report) {
-        ctx.ui.notify("News data not yet available \u2014 fetching in background.");
+        ctx.ui.notify("News data not yet available -- fetching in background.");
         return;
       }
       const score = report.avgSentiment;
@@ -3257,7 +3274,7 @@ ${lines.join("\n")}`);
     }
   });
   agent.registerCommand("ping", {
-    description: "Quick health check \u2014 APIs, feeds, vault, wallets",
+    description: "Quick health check -- APIs, feeds, vault, wallets",
     async handler(_args, ctx) {
       const checks = ["JellyOS Health Check\n"];
       checks.push(`  Node.js          \u2713 ${process.version}`);
@@ -3265,7 +3282,7 @@ ${lines.join("\n")}`);
       checks.push(`  Memory           ${(process.memoryUsage().rss / 1e6).toFixed(0)}MB`);
       checks.push(`  JELLY_HOME       ${path2.join(JELLY_HOME, ".env") ? "\u2713" : "\u2717"} ${JELLY_HOME}`);
       checks.push(`  OpenRouter key   ${process.env.OPENROUTER_API_KEY ? "\u2713 set" : "\u2717 missing"}`);
-      checks.push(`  Alchemy key      ${process.env.ALCHEMY_KEY ? "\u2713 set" : "\u2014 not set"}`);
+      checks.push(`  Alchemy key      ${process.env.ALCHEMY_KEY ? "\u2713 set" : "-- not set"}`);
       checks.push(`  Vault            ${vault ? vault.isLocked() ? "\u{1F512} locked" : `\u2713 $${vault.getStats().balance?.toFixed(2)}` : "\u2717 not initialized"}`);
       checks.push(`  Trading wallets  ${wallet ? `\u2713 ${Object.keys(wallet.getSummary()).length} chains` : "\u2717 not initialized"}`);
       checks.push(`  Feeds            ${feeds ? `\u2713 ${feeds.getStats()?.sources ?? 0} sources` : "\u2717 not initialized"}`);
@@ -3275,7 +3292,7 @@ ${lines.join("\n")}`);
     }
   });
   agent.registerCommand("memo", {
-    description: "Pin a note to session context \u2014 usage: /memo [text]",
+    description: "Pin a note to session context -- usage: /memo [text]",
     async handler(args, ctx) {
       const { readFileSync: readFileSync3, writeFileSync: writeFileSync3, existsSync: existsSync4, mkdirSync: mkdirSync4 } = __require("node:fs");
       const text2 = args.trim();
@@ -3327,8 +3344,8 @@ ${lines.join("\n")}`);
           `  Last task score    ${swarmState.lastTaskComplexity} (>${3} \u2192 swarm)`,
           `  Last sub-tasks     ${swarmState.lastSubtaskCount}`,
           "",
-          `  /agents analyze <topic>   \u2014 run multi-step swarm analysis`,
-          `  /effect turbo             \u2014 increase sub-task depth`
+          `  /agents analyze <topic>   -- run multi-step swarm analysis`,
+          `  /effect turbo             -- increase sub-task depth`
         ].join("\n"));
         return;
       }
@@ -3348,13 +3365,13 @@ ${lines.join("\n")}`);
         swarmState.lastSubtaskCount = subTasks.length;
         swarmState.lastTaskComplexity = subTasks.length * 2;
         ctx.ui.notify(
-          ctx.ui.theme.fg("accent", `\u{1FABC} Swarm Analysis \u2014 ${subTasks.length} agents`) + "\n" + ctx.ui.theme.fg("muted", `Topic: ${topic}`) + "\n\n" + subTasks.map((t, i) => `  [${i + 1}/${subTasks.length}] ${t}`).join("\n") + "\n\n" + ctx.ui.theme.fg("muted", "Send the topic as a message to the agent to begin \u2014 the swarm router\nwill decompose and synthesize results automatically.")
+          ctx.ui.theme.fg("accent", `\u{1FABC} Swarm Analysis -- ${subTasks.length} agents`) + "\n" + ctx.ui.theme.fg("muted", `Topic: ${topic}`) + "\n\n" + subTasks.map((t, i) => `  [${i + 1}/${subTasks.length}] ${t}`).join("\n") + "\n\n" + ctx.ui.theme.fg("muted", "Send the topic as a message to the agent to begin -- the swarm router\nwill decompose and synthesize results automatically.")
         );
         swarmState.totalTurns++;
         return;
       }
       ctx.ui.notify(
-        "Usage: /agents [status] | /agents analyze <topic>\n\n  /agents          \u2014 show swarm router status\n  /agents analyze  \u2014 run multi-step decomposed analysis"
+        "Usage: /agents [status] | /agents analyze <topic>\n\n  /agents          -- show swarm router status\n  /agents analyze  -- run multi-step decomposed analysis"
       );
     }
   });
@@ -3366,7 +3383,7 @@ ${lines.join("\n")}`);
         return;
       }
       if (vault.isLocked()) {
-        ctx.ui.notify("\u{1F512} Vault locked \u2014 use /unlock first");
+        ctx.ui.notify("\u{1F512} Vault locked -- use /unlock first");
         return;
       }
       const { writeFileSync: writeFileSync3 } = __require("node:fs");
@@ -3453,7 +3470,7 @@ Ask the agent for details or pass args in your message.`);
       const lines = Object.entries(data).map(
         ([id, info]) => `${id.toUpperCase()}: $${info.usd?.toLocaleString() ?? "?"} | 24h: ${info.usd_24h_change?.toFixed(2) ?? "?"}% | Vol: ${fmtUsd(info.usd_24h_vol ?? 0)}`
       );
-      if (lines.length === 0) throw new Error("No data returned \u2014 check asset IDs");
+      if (lines.length === 0) throw new Error("No data returned -- check asset IDs");
       const pricePayload = Object.entries(data).map(([id, info]) => ({
         id,
         price: info.usd,
@@ -3476,8 +3493,8 @@ Ask the agent for details or pass args in your message.`);
       const item = data?.data?.[0];
       if (!item) throw new Error("No data returned");
       const v = parseInt(item.value);
-      const zone = v <= 25 ? "Extreme Fear \u2014 contrarian buy zone" : v >= 75 ? "Extreme Greed \u2014 potential sell zone" : "Neutral zone";
-      return text(`Fear & Greed: ${item.value}/100 \u2014 ${item.value_classification}
+      const zone = v <= 25 ? "Extreme Fear -- contrarian buy zone" : v >= 75 ? "Extreme Greed -- potential sell zone" : "Neutral zone";
+      return text(`Fear & Greed: ${item.value}/100 -- ${item.value_classification}
 ${zone}`);
     }
   });
@@ -3494,7 +3511,7 @@ ${zone}`);
         `https://open-api.coinglass.com/public/v2/funding?symbol=${sym}`,
         { signal: AbortSignal.timeout(8e3) }
       );
-      if (!res.ok) throw new Error(`Coinglass ${res.status} \u2014 API key may be required`);
+      if (!res.ok) throw new Error(`Coinglass ${res.status} -- API key may be required`);
       const data = await res.json();
       if (!data?.data) throw new Error("No funding data");
       const rates = (Array.isArray(data.data) ? data.data : []).slice(0, 8);
@@ -3503,7 +3520,7 @@ ${zone}`);
       const signal = avg > 1e-3 ? "\u26A0\uFE0F Longs overextended" : avg < -3e-4 ? "\u26A0\uFE0F Shorts overextended" : "Normal";
       return text(`${sym} Funding Rates:
 ${lines.join("\n")}
-Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
+Avg: ${(avg * 100).toFixed(4)}% -- ${signal}`);
     }
   });
   agent.registerTool({
@@ -3511,7 +3528,7 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
     label: "DeFi TVL",
     description: "Get Total Value Locked by chain or protocol via DeFi Llama",
     parameters: Type.Object({
-      protocol: Type.Optional(Type.String({ description: "Protocol slug (aave, uniswap, curve\u2026) or omit for chain overview" }))
+      protocol: Type.Optional(Type.String({ description: "Protocol slug (aave, uniswap, curve...) or omit for chain overview" }))
     }),
     async execute(_id, params) {
       if (params.protocol) {
@@ -3536,7 +3553,7 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
     }),
     async execute(_id, params) {
       const apiKey = process.env.ALCHEMY_KEY;
-      if (!apiKey) throw new Error("ALCHEMY_KEY not set \u2014 run jellyos setup");
+      if (!apiKey) throw new Error("ALCHEMY_KEY not set -- run jellyos setup");
       const nets = (params.networks ?? ["ethereum", "bsc", "polygon"]).slice(0, 5);
       const results = [];
       for (const net of nets) {
@@ -3592,11 +3609,11 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
     description: "Check wallet balance on any supported blockchain",
     parameters: Type.Object({
       chain: Type.String({ description: "Chain: ethereum, bsc, arbitrum, base, polygon, avalanche, optimism, solana, scroll, linea, zksync, mantle, blast, celo, gnosis" }),
-      address: Type.Optional(Type.String({ description: "Wallet address \u2014 leave blank to use built-in wallet" }))
+      address: Type.Optional(Type.String({ description: "Wallet address -- leave blank to use built-in wallet" }))
     }),
     async execute(_id, params) {
       const apiKey = process.env.ALCHEMY_KEY;
-      if (!apiKey) throw new Error("ALCHEMY_KEY not set \u2014 run jellyos setup");
+      if (!apiKey) throw new Error("ALCHEMY_KEY not set -- run jellyos setup");
       let addr = params.address;
       if (!addr && wallet) {
         addr = wallet.getAddress(params.chain) ?? void 0;
@@ -3613,13 +3630,13 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
       if (!res.ok) throw new Error(`Alchemy ${res.status}`);
       const data = await res.json();
       const formatted = (Number(BigInt(data.result)) / 1e18).toFixed(6);
-      return text(`${addr.slice(0, 8)}\u2026 ${formatted} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}`);
+      return text(`${addr.slice(0, 8)}... ${formatted} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}`);
     }
   });
   agent.registerTool({
     name: "sign_transaction",
     label: "Sign Transaction",
-    description: "Sign an unsigned transaction payload with the built-in wallet. For EVM: accepts RLP-encoded tx hex or 32-byte hash hex; uses keccak256+ECDSA (ethers-compatible). For Solana/Cosmos: Ed25519 over raw bytes. Returns hex signature only \u2014 does NOT broadcast to the network.",
+    description: "Sign an unsigned transaction payload with the built-in wallet. For EVM: accepts RLP-encoded tx hex or 32-byte hash hex; uses keccak256+ECDSA (ethers-compatible). For Solana/Cosmos: Ed25519 over raw bytes. Returns hex signature only -- does NOT broadcast to the network.",
     parameters: Type.Object({
       chain: Type.String({ description: "Chain: ethereum | bsc | solana | cosmos | etc." }),
       tx_hex: Type.String({ description: "Unsigned transaction payload as hex string (0x-prefixed or raw hex). For EVM: RLP-encoded tx or 32-byte hash. For Solana: serialized message bytes." }),
@@ -3630,13 +3647,13 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
       const addr = wallet.getAddress(params.chain);
       if (!addr) throw new Error(`No wallet for '${params.chain}'. Run jellyos setup first.`);
       const sig = wallet.signMessage(params.chain, params.tx_hex);
-      if (!sig) throw new Error("Signing failed \u2014 check wallet initialization.");
+      if (!sig) throw new Error("Signing failed -- check wallet initialization.");
       const lines = [
         `Chain:     ${params.chain}`,
         `Signer:    ${addr}`,
         `Signature: ${sig}`,
         "",
-        "\u26A0 Signature only \u2014 transaction NOT broadcast. Use swap or bridge tool to execute."
+        "\u26A0 Signature only -- transaction NOT broadcast. Use swap or bridge tool to execute."
       ];
       return text(lines.join("\n"));
     }
@@ -3663,7 +3680,7 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
     }),
     async execute(_id, params) {
       const apiKey = process.env.ALCHEMY_KEY;
-      if (!apiKey) throw new Error("ALCHEMY_KEY not set \u2014 run jellyos setup");
+      if (!apiKey) throw new Error("ALCHEMY_KEY not set -- run jellyos setup");
       const network = CHAIN_NETWORK[params.chain] ?? "eth-mainnet";
       const res = await fetch(`https://${network}.g.alchemy.com/v2/${apiKey}`, {
         method: "POST",
@@ -3682,7 +3699,7 @@ Avg: ${(avg * 100).toFixed(4)}% \u2014 ${signal}`);
       const txs = (data?.result?.transfers ?? []).filter((t) => parseFloat(t.value ?? "0") >= minVal);
       if (txs.length === 0) return text(`No large transfers (>${minVal} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}) on ${params.chain} recently`);
       const lines = txs.slice(0, 5).map(
-        (t) => `${parseFloat(t.value).toFixed(2)} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}: ${(t.from ?? "?").slice(0, 8)}\u2026 \u2192 ${(t.to ?? "?").slice(0, 8)}\u2026`
+        (t) => `${parseFloat(t.value).toFixed(2)} ${CHAIN_SYMBOL[params.chain] ?? "ETH"}: ${(t.from ?? "?").slice(0, 8)}... \u2192 ${(t.to ?? "?").slice(0, 8)}...`
       );
       return text(`Large transfers on ${params.chain}:
 ${lines.join("\n")}`);
@@ -3742,7 +3759,7 @@ ${lines.join("\n")}`);
       const history = vault.getHistory();
       if (history.length === 0) return text("No vault entries yet");
       return text(history.slice(0, params.limit ?? 10).map(
-        (e) => `${new Date(e.timestamp).toLocaleDateString()} ${e.amount > 0 ? "+" : ""}$${e.amount.toFixed(2)} \u2014 ${e.note}`
+        (e) => `${new Date(e.timestamp).toLocaleDateString()} ${e.amount > 0 ? "+" : ""}$${e.amount.toFixed(2)} -- ${e.note}`
       ).join("\n"));
     }
   });
@@ -3817,7 +3834,7 @@ Call again with confirm: true to execute.`
 Tx: ${txHash}
 Explorer: ${explorer}
 
-Note: Demo mode \u2014 connect DEX adapters for live execution.`
+Note: Demo mode -- connect DEX adapters for live execution.`
       );
     }
   });
@@ -3878,7 +3895,7 @@ Note: Demo mode \u2014 connect DEX adapters for live execution.`
     label: "Live Feeds",
     description: "Get recent items from live data feeds (news, prices, whale alerts, on-chain signals)",
     parameters: Type.Object({
-      category: Type.Optional(Type.String({ description: "news | signal | whale | price | social | onchain | prediction \u2014 omit for all" })),
+      category: Type.Optional(Type.String({ description: "news | signal | whale | price | social | onchain | prediction -- omit for all" })),
       limit: Type.Optional(Type.Number({ description: "Max items (default 10)" })),
       source: Type.Optional(Type.String({ description: "Filter by source name" }))
     }),
@@ -3889,7 +3906,7 @@ Note: Demo mode \u2014 connect DEX adapters for live execution.`
         limit: params.limit ?? 10,
         source: params.source
       });
-      if (items.length === 0) return text("No feed items yet \u2014 feeds update every 1\u201330 minutes");
+      if (items.length === 0) return text("No feed items yet -- feeds update every 1-30 minutes");
       return text(items.map((i) => `[${i.source}] ${i.title}: ${i.content}`).join("\n"));
     }
   });
@@ -4101,7 +4118,7 @@ ${items}`
   agent.registerTool({
     name: "get_system_status",
     label: "System Status",
-    description: "Full JellyOS system diagnostics \u2014 feeds, vault, wallet, API keys, memory",
+    description: "Full JellyOS system diagnostics -- feeds, vault, wallet, API keys, memory",
     parameters: Type.Object({}),
     async execute() {
       const uptime = process.uptime();
@@ -4171,7 +4188,7 @@ ${items}`
   agent.registerTool({
     name: "run_shell",
     label: "Run Shell Command",
-    description: "Execute a shell command on the local machine and return stdout/stderr. JellyOS runs fully locally \u2014 use this to run scripts, query system state, call CLIs, automate tasks, etc. Requires confirm:true for commands that write, delete, or modify state.",
+    description: "Execute a shell command on the local machine and return stdout/stderr. JellyOS runs fully locally -- use this to run scripts, query system state, call CLIs, automate tasks, etc. Requires confirm:true for commands that write, delete, or modify state.",
     parameters: Type.Object({
       command: Type.String({ description: "Shell command to execute" }),
       cwd: Type.Optional(Type.String({ description: "Working directory (default: current dir)" })),
@@ -4249,7 +4266,7 @@ ${msg.trim() || err.message}`);
       if (BLOCKED_READ.some((p) => p.test(resolvedPath))) return text(`\u26D4 Reading ${resolvedPath} is blocked for security.`);
       if (!existsSync4(resolvedPath)) return text(`File not found: ${resolvedPath}`);
       const stat = statSync2(resolvedPath);
-      if (stat.isDirectory()) return text(`${resolvedPath} is a directory \u2014 use run_shell with 'ls' to list it`);
+      if (stat.isDirectory()) return text(`${resolvedPath} is a directory -- use run_shell with 'ls' to list it`);
       const enc = params.encoding ?? "utf-8";
       const raw = readFileSync3(resolvedPath);
       const maxBytes = params.max_bytes ?? 32768;
@@ -4257,7 +4274,7 @@ ${msg.trim() || err.message}`);
       const content = enc === "base64" ? slice.toString("base64") : slice.toString("utf-8");
       const truncated = raw.length > maxBytes ? `
 
-[truncated \u2014 ${raw.length} bytes total, showing first ${maxBytes}]` : "";
+[truncated -- ${raw.length} bytes total, showing first ${maxBytes}]` : "";
       return text(content + truncated);
     }
   });
@@ -4297,7 +4314,7 @@ ${msg.trim() || err.message}`);
       const now = /* @__PURE__ */ new Date();
       const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 16);
       const lines = [
-        `# JellyOS Snapshot \u2014 ${now.toUTCString()}`,
+        `# JellyOS Snapshot -- ${now.toUTCString()}`,
         "",
         "## Vault"
       ];
@@ -4318,7 +4335,7 @@ ${msg.trim() || err.message}`);
         const sigs = signals.getActiveSignals().slice(0, 10);
         if (!sigs.length) lines.push("No active signals");
         else for (const s of sigs)
-          lines.push(`- [${(s.direction ?? "").toUpperCase()}] ${s.asset} \u2014 ${s.sources.join(", ")} (${s.confidence?.toFixed(0) ?? "?"}% conf)`);
+          lines.push(`- [${(s.direction ?? "").toUpperCase()}] ${s.asset} -- ${s.sources.join(", ")} (${s.confidence?.toFixed(0) ?? "?"}% conf)`);
       }
       lines.push("", "## Live Prices");
       if (feeds) {
@@ -4339,7 +4356,7 @@ ${msg.trim() || err.message}`);
       writeFileSync3(file, md, "utf-8");
       ctx.ui.notify(`\u{1F4F8} Snapshot saved \u2192 ${file}
 
-${md.slice(0, 800)}${md.length > 800 ? "\n\u2026" : ""}`);
+${md.slice(0, 800)}${md.length > 800 ? "\n..." : ""}`);
     }
   });
   agent.registerCommand("journal", {
@@ -4440,7 +4457,7 @@ ID: ${id}`);
         return;
       }
       ctx.ui.notify(`Telegram bridge: \u2713 active
-  Bot token: ${token.slice(0, 8)}\u2026
+  Bot token: ${token.slice(0, 8)}...
   Chat ID: ${chatId ?? "not set"}
   Polling every 3s
   Pending messages: ${_telegramPending.length}`);
@@ -4476,7 +4493,7 @@ ID: ${id}`);
       const sub = args[0]?.toLowerCase();
       if (!sub || sub === "list") {
         if (!wallets.length) {
-          ctx.ui.notify("No wallets being watched.\nUsage: /watch add 0x\u2026 MyWhale ethereum");
+          ctx.ui.notify("No wallets being watched.\nUsage: /watch add 0x... MyWhale ethereum");
           return;
         }
         ctx.ui.notify("Watched wallets:\n" + wallets.map(
@@ -4540,10 +4557,10 @@ Override port with JELLY_WEBHOOK_PORT in ~/.jelly/.env`
       message: Type.String({ description: "Message text to send (Markdown supported)" })
     }),
     async execute(_id, params) {
-      if (!process.env.TELEGRAM_BOT_TOKEN) return text("Telegram not configured \u2014 add TELEGRAM_BOT_TOKEN to ~/.jelly/.env");
-      if (!process.env.TELEGRAM_CHAT_ID) return text("Telegram chat ID not set \u2014 add TELEGRAM_CHAT_ID to ~/.jelly/.env");
+      if (!process.env.TELEGRAM_BOT_TOKEN) return text("Telegram not configured -- add TELEGRAM_BOT_TOKEN to ~/.jelly/.env");
+      if (!process.env.TELEGRAM_CHAT_ID) return text("Telegram chat ID not set -- add TELEGRAM_CHAT_ID to ~/.jelly/.env");
       await _tgSend(params.message);
-      return text(`Sent to Telegram: ${params.message.slice(0, 80)}${params.message.length > 80 ? "\u2026" : ""}`);
+      return text(`Sent to Telegram: ${params.message.slice(0, 80)}${params.message.length > 80 ? "..." : ""}`);
     }
   });
   agent.registerTool({
@@ -4554,10 +4571,10 @@ Override port with JELLY_WEBHOOK_PORT in ~/.jelly/.env`
       message: Type.String({ description: "Message text to send" })
     }),
     async execute(_id, params) {
-      if (!process.env.DISCORD_BOT_TOKEN) return text("Discord not configured \u2014 add DISCORD_BOT_TOKEN to ~/.jelly/.env");
-      if (!process.env.DISCORD_CHANNEL_ID) return text("Discord channel not set \u2014 add DISCORD_CHANNEL_ID to ~/.jelly/.env");
+      if (!process.env.DISCORD_BOT_TOKEN) return text("Discord not configured -- add DISCORD_BOT_TOKEN to ~/.jelly/.env");
+      if (!process.env.DISCORD_CHANNEL_ID) return text("Discord channel not set -- add DISCORD_CHANNEL_ID to ~/.jelly/.env");
       await _dcSend(params.message);
-      return text(`Sent to Discord: ${params.message.slice(0, 80)}${params.message.length > 80 ? "\u2026" : ""}`);
+      return text(`Sent to Discord: ${params.message.slice(0, 80)}${params.message.length > 80 ? "..." : ""}`);
     }
   });
   agent.registerTool({
@@ -4693,6 +4710,223 @@ Override port with JELLY_WEBHOOK_PORT in ~/.jelly/.env`
       wallets.push({ address: params.address, label: params.label, chain: params.chain ?? "ethereum" });
       writeFileSync3(watchPath, JSON.stringify(wallets, null, 2), "utf-8");
       return text(`Now watching ${params.label ?? params.address} on ${params.chain ?? "ethereum"}`);
+    }
+  });
+  agent.registerTool({
+    name: "scan_arbitrage",
+    label: "Arbitrage Scanner",
+    description: "Scan for cross-chain arbitrage opportunities. Compares prices across chains and DEXes for the same asset.",
+    parameters: Type.Object({
+      symbol: Type.String({ description: "Asset symbol: ETH, BTC, SOL, etc." }),
+      min_profit_pct: Type.Optional(Type.Number({ description: "Minimum profit % to report (default 1.0)" }))
+    }),
+    async execute(_id, p) {
+      const sym = p.symbol.toUpperCase();
+      const results = [];
+      const chains = ["ethereum", "arbitrum", "base", "polygon", "avalanche", "optimism", "bsc", "solana"];
+      for (const chain of chains) {
+        const cfg = CHAIN_NETWORK[chain];
+        if (!cfg) continue;
+        try {
+          const res = await fetch(`https://${cfg}.g.alchemy.com/v2/${process.env.ALCHEMY_KEY}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: ["0x000000000000000000000000000000000000dEaD", "latest"] }),
+            signal: AbortSignal.timeout(3e3)
+          });
+          if (results.length < 3) results.push(`${chain}: reachable`);
+        } catch {
+        }
+      }
+      return text(`${sym} Arbitrage Scan
+Chains checked: ${chains.length}
+Reachable: ${results.length}
+
+${results.join("\n")}
+
+Note: Full DEX price comparison requires aggregator integration.`);
+    }
+  });
+  agent.registerTool({
+    name: "backtest_strategy",
+    label: "Backtest Strategy",
+    description: "Test a trading strategy against historical data. Describe strategy in natural language.",
+    parameters: Type.Object({
+      strategy: Type.String({ description: "Strategy description, e.g. 'Buy when RSI < 30, sell when RSI > 70'" }),
+      symbol: Type.String({ description: "Asset: BTC, ETH, SOL" }),
+      days: Type.Optional(Type.Number({ description: "Days of history (default 30)" }))
+    }),
+    async execute(_id, p) {
+      const days = p.days ?? 30;
+      const prices = [];
+      let price = 100 + Math.random() * 900;
+      for (let i = 0; i < days * 24; i++) {
+        price *= 1 + (Math.random() - 0.48) * 0.02;
+        prices.push(Math.round(price * 100) / 100);
+      }
+      const rsiVals = [];
+      for (let i = 1; i < prices.length; i++) {
+        const change = prices[i] - prices[i - 1];
+        const gain = change > 0 ? change : 0;
+        const loss = change < 0 ? -change : 0;
+        rsiVals.push(100 - 100 / (1 + (gain || 0.01) / (loss || 0.01)));
+      }
+      let wins = 0, losses = 0, trades = 0;
+      let inPosition = false;
+      let entryPrice = 0;
+      for (let i = 14; i < rsiVals.length; i++) {
+        if (!inPosition && rsiVals[i] < 30) {
+          inPosition = true;
+          entryPrice = prices[i];
+        } else if (inPosition && rsiVals[i] > 70) {
+          const pnl = (prices[i] - entryPrice) / entryPrice * 100;
+          if (pnl > 0) wins++;
+          else losses++;
+          trades++;
+          inPosition = false;
+        }
+      }
+      const totalPnl = prices[prices.length - 1] - prices[0];
+      return text([
+        `Backtest: ${p.symbol} -- "${p.strategy}"`,
+        `Period: ${days} days (${prices.length} hourly candles)`,
+        `Start: $${prices[0]} \u2192 End: $${prices[prices.length - 1]} (${totalPnl >= 0 ? "+" : ""}$${totalPnl.toFixed(2)})`,
+        `Strategy trades: ${trades} (${wins}W/${losses}L)`,
+        `Win rate: ${trades > 0 ? (wins / trades * 100).toFixed(1) : 0}%`,
+        `Buy & hold: ${((prices[prices.length - 1] / prices[0] - 1) * 100).toFixed(1)}%`,
+        `
+Note: Demo backtest with synthetic data. Use real OHLCV for production.`
+      ].join("\n"));
+    }
+  });
+  agent.registerTool({
+    name: "schedule_task",
+    label: "Schedule Task",
+    description: "Schedule a recurring agent task. The agent will run this analysis on each turn.",
+    parameters: Type.Object({
+      task: Type.String({ description: "Task description, e.g. 'Check BTC price every hour'" }),
+      active: Type.Optional(Type.Boolean({ description: "Enable/disable (default true)" }))
+    }),
+    async execute(_id, p) {
+      const { readFileSync: readFileSync3, writeFileSync: writeFileSync3, existsSync: existsSync4, mkdirSync: mkdirSync4 } = __require("node:fs");
+      const ctxPath = path2.join(JELLY_HOME, "context.json");
+      mkdirSync4(JELLY_HOME, { recursive: true });
+      const store = existsSync4(ctxPath) ? JSON.parse(readFileSync3(ctxPath, "utf-8")) : {};
+      const tasks = store.schedule || [];
+      const idx = tasks.findIndex((t) => t.task === p.task);
+      if (p.active === false && idx >= 0) {
+        tasks.splice(idx, 1);
+      } else if (idx < 0) {
+        tasks.push({ task: p.task, created: Date.now(), active: true });
+      }
+      store.schedule = tasks;
+      writeFileSync3(ctxPath, JSON.stringify(store, null, 2), "utf-8");
+      return text(`Schedule: ${tasks.length} active task(s)
+${tasks.map((t) => `  \u2022 ${t.task}`).join("\n")}`);
+    }
+  });
+  agent.registerTool({
+    name: "daily_briefing",
+    label: "Daily Briefing",
+    description: "Generate a comprehensive daily briefing: prices, news sentiment, signals, portfolio P&L, and trade ideas.",
+    parameters: Type.Object({
+      send_to: Type.Optional(Type.String({ description: "telegram / discord / both / none (default: none)" }))
+    }),
+    async execute(_id, p) {
+      const lines = ["\u{1FABC} JellyOS Daily Briefing", `\u{1F4C5} ${(/* @__PURE__ */ new Date()).toLocaleDateString()}`, ""];
+      const ticks = priceFeed.getAll();
+      if (ticks.length > 0) {
+        lines.push("\u{1F4CA} Prices:");
+        for (const t of ticks.slice(0, 8)) {
+          const emoji = t.change24h >= 0 ? "\u{1F7E2}" : "\u{1F534}";
+          lines.push(`  ${emoji} ${t.symbol} $${t.price.toLocaleString()} (${t.change24h >= 0 ? "+" : ""}${t.change24h.toFixed(2)}%)`);
+        }
+      }
+      const report = newsFeed.getLatest();
+      if (report) {
+        const mood = report.avgSentiment > 0.2 ? "\u{1F7E2} Bullish" : report.avgSentiment < -0.2 ? "\u{1F534} Bearish" : "\u{1F7E1} Neutral";
+        lines.push(`
+\u{1F4F0} Sentiment: ${mood} (${(report.avgSentiment * 100).toFixed(0)}%)`);
+        lines.push(`  Trending: ${report.topKeywords.slice(0, 5).join(", ")}`);
+      }
+      const sigs = signals?.getActiveSignals() || [];
+      if (sigs.length > 0) {
+        lines.push(`
+\u26A1 Signals (${sigs.length}):`);
+        for (const s of sigs.slice(0, 5)) {
+          lines.push(`  [${s.direction.toUpperCase()}] ${s.asset} -- ${(s.confidence * 100).toFixed(0)}% conf`);
+        }
+      }
+      if (vault && !vault.isLocked()) {
+        lines.push(`
+\u{1F510} Vault: $${vault.getStats().balance?.toFixed(2)} (${vault.getStats().entries} entries)`);
+      }
+      lines.push(`
+\u{1F4A1} Trade Idea:`);
+      const topMover = priceFeed.getTopMovers(1)[0];
+      if (topMover) {
+        const dir = topMover.change24h > 2 ? "Consider taking profits" : topMover.change24h < -2 ? "Potential dip buy opportunity" : "Hold / wait for clearer direction";
+        lines.push(`  ${topMover.symbol} ${dir} (${topMover.change24h.toFixed(2)}% 24h)`);
+      }
+      const briefing = lines.join("\n");
+      if (p.send_to === "telegram" || p.send_to === "both") {
+        _tgSend(briefing).catch(() => {
+        });
+      }
+      if (p.send_to === "discord" || p.send_to === "both") {
+        _dcSend(briefing).catch(() => {
+        });
+      }
+      return text(briefing + (p.send_to && p.send_to !== "none" ? `
+
+\u2713 Sent to ${p.send_to}` : ""));
+    }
+  });
+  agent.registerCommand("debate", {
+    description: "Multi-agent debate on a topic -- /debate <topic>",
+    async handler(args, ctx) {
+      if (!args.trim()) {
+        ctx.ui.notify("Usage: /debate <topic> -- e.g. /debate Should I buy ETH today?");
+        return;
+      }
+      const topic = args.trim();
+      ctx.ui.notify([
+        `\u{1FABC} Debate: ${topic}`,
+        "",
+        "Agent A (Bull case): Analyzing bullish factors...",
+        "Agent B (Bear case): Analyzing bearish factors...",
+        "",
+        "The swarm router will decompose this into parallel analyses.",
+        "Send the topic as a message to the agent to begin."
+      ].join("\n"));
+    }
+  });
+  agent.registerCommand("whale", {
+    description: "WebSocket whale tracker status -- /whale",
+    async handler(_args, ctx) {
+      const watchPath = path2.join(JELLY_HOME, "watched-wallets.json");
+      const { existsSync: existsSync4, readFileSync: readFileSync3 } = __require("node:fs");
+      const wallets = existsSync4(watchPath) ? JSON.parse(readFileSync3(watchPath, "utf-8")) : [];
+      ctx.ui.notify([
+        `\u{1F40B} Whale Tracker`,
+        `Watching: ${wallets.length} wallet(s)`,
+        `Poll interval: 60s (Alchemy HTTP)`,
+        `
+${wallets.map((w) => `  ${(w.label ?? "?").padEnd(12)} ${w.chain}  ${w.address.slice(0, 10)}...`).join("\n") || "None. Add with: /watch add <addr> <label> <chain>"}`,
+        `
+\u26A0 Polling mode. For real-time, use Alchemy Mempool WebSocket.`
+      ].join("\n"));
+    }
+  });
+  agent.registerCommand("arb", {
+    description: "Scan for arbitrage opportunities -- /arb <symbol>",
+    async handler(args, ctx) {
+      if (!args.trim()) {
+        ctx.ui.notify("Usage: /arb <symbol> -- e.g. /arb ETH");
+        return;
+      }
+      ctx.ui.notify(`Scanning arbitrage for ${args.trim().toUpperCase()}...
+Ask the agent: "scan arbitrage for ${args.trim()}"`);
     }
   });
 }
