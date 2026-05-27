@@ -3,13 +3,9 @@ import { GlowCard } from '../components/GlowCard';
 
 const MODELS = [
   'anthropic/claude-sonnet-4-20250514',
-  'openai/gpt-4o-mini',
-  'openai/gpt-4o',
-  'google/gemini-2.5-pro',
-  'meta-llama/llama-4-maverick',
-  'deepseek/deepseek-chat',
-  'mistralai/mistral-large',
-  'x-ai/grok-3-mini',
+  'openai/gpt-4o-mini', 'openai/gpt-4o',
+  'google/gemini-2.5-pro', 'meta-llama/llama-4-maverick',
+  'deepseek/deepseek-chat', 'mistralai/mistral-large', 'x-ai/grok-3-mini',
 ];
 
 const EFFECT_LEVELS = [
@@ -21,7 +17,7 @@ const EFFECT_LEVELS = [
 
 export const Settings: React.FC = () => {
   const [selectedEffect, setSelectedEffect] = useState('normal');
-  const [primaryModel, setPrimaryModel] = useState('anthropic/claude-sonnet-4-20250514');
+  const [primaryModel, setPrimaryModel] = useState(MODELS[0]);
   const [dashPort, setDashPort] = useState('4320');
   const [threshold, setThreshold] = useState('500');
 
@@ -32,19 +28,12 @@ export const Settings: React.FC = () => {
         <p className="text-xs mt-1" style={{ color: '#555' }}>Configure via .env file — changes here are for reference only</p>
       </div>
 
-      {/* Effect level */}
       <GlowCard title="Effect Level">
         <div className="p-4 grid grid-cols-2 gap-3">
           {EFFECT_LEVELS.map(lvl => (
-            <button
-              key={lvl.id}
-              onClick={() => setSelectedEffect(lvl.id)}
+            <button key={lvl.id} onClick={() => setSelectedEffect(lvl.id)}
               className="p-3 rounded border text-left transition-all"
-              style={{
-                borderColor: selectedEffect === lvl.id ? lvl.color : '#222',
-                background: selectedEffect === lvl.id ? `${lvl.color}11` : 'transparent',
-              }}
-            >
+              style={{ borderColor: selectedEffect === lvl.id ? lvl.color : '#222', background: selectedEffect === lvl.id ? `${lvl.color}11` : 'transparent' }}>
               <div className="font-bold text-xs mb-1" style={{ color: lvl.color }}>{lvl.label}</div>
               <div className="text-xs" style={{ color: '#666' }}>{lvl.desc}</div>
             </button>
@@ -52,21 +41,16 @@ export const Settings: React.FC = () => {
         </div>
         <div className="px-4 pb-4">
           <div className="p-3 rounded text-xs font-mono" style={{ background: '#0d0d0d', color: '#666', border: '1px solid #1a1a1a' }}>
-            # In .env:<br />
-            JELLY_EFFECT_LEVEL={selectedEffect}
+            # In .env:<br />JELLY_EFFECT_LEVEL={selectedEffect}
           </div>
         </div>
       </GlowCard>
 
-      {/* Primary model */}
       <GlowCard title="Primary Model">
         <div className="p-4">
-          <select
-            value={primaryModel}
-            onChange={e => setPrimaryModel(e.target.value)}
+          <select value={primaryModel} onChange={e => setPrimaryModel(e.target.value)}
             className="w-full px-3 py-2 rounded border text-xs bg-transparent outline-none cursor-pointer"
-            style={{ borderColor: '#333', color: '#aaa', background: '#111' }}
-          >
+            style={{ borderColor: '#333', color: '#aaa', background: '#111' }}>
             {MODELS.map(m => <option key={m} value={m} style={{ background: '#111' }}>{m}</option>)}
           </select>
           <div className="mt-3 p-3 rounded text-xs font-mono" style={{ background: '#0d0d0d', color: '#666', border: '1px solid #1a1a1a' }}>
@@ -75,17 +59,13 @@ export const Settings: React.FC = () => {
         </div>
       </GlowCard>
 
-      {/* Dashboard config */}
       <GlowCard title="Dashboard">
         <div className="p-4 space-y-3">
           <div>
             <label className="text-xs block mb-1" style={{ color: '#666' }}>Dashboard Port</label>
-            <input
-              value={dashPort}
-              onChange={e => setDashPort(e.target.value)}
+            <input value={dashPort} onChange={e => setDashPort(e.target.value)}
               className="px-3 py-2 rounded border text-xs bg-transparent outline-none w-32"
-              style={{ borderColor: '#333', color: '#aaa' }}
-            />
+              style={{ borderColor: '#333', color: '#aaa' }} />
           </div>
           <div className="p-3 rounded text-xs font-mono" style={{ background: '#0d0d0d', color: '#666', border: '1px solid #1a1a1a' }}>
             JELLY_DASHBOARD_PORT={dashPort}
@@ -93,22 +73,14 @@ export const Settings: React.FC = () => {
         </div>
       </GlowCard>
 
-      {/* Auto vault */}
       <GlowCard title="Auto-Vault Threshold">
         <div className="p-4 space-y-3">
-          <p className="text-xs" style={{ color: '#666' }}>
-            Automatically sweep profits to the encrypted vault when P&L exceeds this amount.
-          </p>
+          <p className="text-xs" style={{ color: '#666' }}>Automatically sweep profits to the encrypted vault when P&L exceeds this amount.</p>
           <div className="flex items-center gap-2">
             <span className="text-xs" style={{ color: '#555' }}>$</span>
-            <input
-              value={threshold}
-              onChange={e => setThreshold(e.target.value)}
-              type="number"
+            <input value={threshold} onChange={e => setThreshold(e.target.value)} type="number"
               className="px-3 py-2 rounded border text-xs bg-transparent outline-none w-32"
-              style={{ borderColor: '#333', color: '#aaa' }}
-            />
-            <span className="text-xs" style={{ color: '#555' }}>USD</span>
+              style={{ borderColor: '#333', color: '#aaa' }} />
           </div>
           <div className="p-3 rounded text-xs font-mono" style={{ background: '#0d0d0d', color: '#666', border: '1px solid #1a1a1a' }}>
             AUTO_VAULT_THRESHOLD={threshold}
@@ -116,7 +88,23 @@ export const Settings: React.FC = () => {
         </div>
       </GlowCard>
 
-      {/* API Keys reference */}
+      {/* #11 Alert Configuration UI */}
+      <GlowCard title="Price Alerts">
+        <div className="p-4 space-y-3">
+          <p className="text-xs" style={{ color: '#666' }}>
+            Set price alerts that fire when a token crosses a threshold. Triggers desktop + Telegram/Discord notifications.
+          </p>
+          <div className="p-3 rounded text-xs font-mono space-y-1" style={{ background: '#0d0d0d', color: '#666', border: '1px solid #1a1a1a' }}>
+            <div style={{ color: '#888' }}># Add alert via agent:</div>
+            <div style={{ color: '#00e5ff' }}>/alert ETH {">"} 3500</div>
+            <div style={{ color: '#00e5ff' }}>/alert BTC {"<"} 90000</div>
+            <div style={{ color: '#888' }}># List active alerts:</div>
+            <div style={{ color: '#00e5ff' }}>/alert list</div>
+            <div style={{ color: '#555' }}># Or use agent tools: set_alert / clear_alert</div>
+          </div>
+        </div>
+      </GlowCard>
+
       <GlowCard title="API Keys (set in .env)" accent="#4a9eff">
         <div className="p-4 space-y-2 font-mono text-xs" style={{ color: '#888' }}>
           {[
@@ -131,8 +119,7 @@ export const Settings: React.FC = () => {
               <span style={{ color: req === 'required' ? '#FFD700' : '#555', minWidth: 240 }}>{key}</span>
               <span className="px-1.5 py-0.5 rounded text-xs" style={{
                 background: req === 'required' ? '#FFD70022' : '#11111',
-                color: req === 'required' ? '#FFD700' : '#444',
-                border: '1px solid #222',
+                color: req === 'required' ? '#FFD700' : '#444', border: '1px solid #222',
               }}>{req}</span>
               <span style={{ color: '#444' }}>{note}</span>
             </div>

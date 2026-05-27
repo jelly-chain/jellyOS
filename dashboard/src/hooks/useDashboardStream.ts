@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export interface DashboardEvent {
-  type: 'agent_status' | 'trade_executed' | 'wallet_balance' | 'vault_update' |
-        'feed_item' | 'log_entry' | 'swarm_update' | 'signal_update' | 'connected';
+  type: string;
   data: any;
   timestamp: number;
 }
@@ -17,15 +16,24 @@ export interface DashboardState {
   signals: any[];
   logEntries: any[];
   reconnecting: boolean;
+  agentStatus: any | null;
+  /** Messages sent from dashboard → agent */
+  dashboardMessages: Array<{ text: string; ts: number }>;
+  /** Streaming agent response */
+  streamingText: string;
 }
 
 const DASHBOARD_PORT = parseInt(import.meta.env.VITE_DASHBOARD_PORT || '4320');
-const BASE_URL = `http://localhost:${DASHBOARD_PORT}`;
 const MAX_EVENTS = 200;
 const MAX_FEEDS = 50;
 const MAX_LOGS = 100;
 
-export function useDashboardStream(): DashboardState & { retry: () => void } {
+export function useDashboardStream(): DashboardState & {
+  retry: () => void;
+  sendMessage: (text: string) => void;
+  setEffectLevel: (level: string) => void;
+  requestStatus: () => void;
+} {
   const [state, setState] = useState<DashboardState>({
     connected: false,
     events: [],
@@ -36,28 +44,56 @@ export function useDashboardStream(): DashboardState & { retry: () => void } {
     signals: [],
     logEntries: [],
     reconnecting: false,
+    agentStatus: null,
+    dashboardMessages: [],
+    streamingText: '',
   });
 
-  const esRef = useRef<EventSource | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCount = useRef(0);
 
+  const sendMessage = useCallback((text: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'agent_message', text }));
+      setState(s => ({
+        ...s,
+        dashboardMessages: [...s.dashboardMessages, { text, ts: Date.now() }],
+        streamingText: '', // clear any previous streaming
+      }));
+    }
+  }, []);
+
+  const setEffectLevel = useCallback((level: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'set_effect', level }));
+    }
+  }, []);
+
+  const requestStatus = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'get_status' }));
+    }
+  }, []);
+
   const connect = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
     }
 
     try {
-      const es = new EventSource(`${BASE_URL}/events`);
-      esRef.current = es;
+      const ws = new WebSocket(`ws://localhost:${DASHBOARD_PORT}`);
+      wsRef.current = ws;
 
-      es.onopen = () => {
+      ws.onopen = () => {
         retryCount.current = 0;
         setState(s => ({ ...s, connected: true, reconnecting: false }));
+        // Request initial status
+        ws.send(JSON.stringify({ type: 'get_status' }));
       };
 
-      es.onmessage = (e) => {
+      ws.onmessage = (e) => {
         let event: DashboardEvent;
         try { event = JSON.parse(e.data); } catch { return; }
 
@@ -69,12 +105,16 @@ export function useDashboardStream(): DashboardState & { retry: () => void } {
           let recentFeeds = s.recentFeeds;
           let signals = s.signals;
           let logEntries = s.logEntries;
+          let agentStatus = s.agentStatus;
 
           switch (event.type) {
+            case 'connected':
+              break;
             case 'trade_executed':
               lastTrade = { ...event.data, time: new Date(event.timestamp).toLocaleTimeString() };
               break;
             case 'vault_update':
+            case 'vault_sweep':
               if (event.data?.balance !== undefined) vaultBalance = event.data.balance;
               break;
             case 'agent_status':
@@ -90,20 +130,31 @@ export function useDashboardStream(): DashboardState & { retry: () => void } {
             case 'log_entry':
               logEntries = [{ ...event.data, time: new Date(event.timestamp).toLocaleTimeString() }, ...s.logEntries].slice(0, MAX_LOGS);
               break;
+            case 'status':
+              agentStatus = event.data;
+              break;
+            case 'text_delta':
+              // @ts-ignore - streaming text
+              return { ...s, events, streamingText: (s as any).streamingText + (event.data?.text ?? '') };
+            case 'turn_done':
+              // @ts-ignore - clear streaming
+              return { ...s, events, streamingText: '' };
           }
 
-          return { ...s, events, lastTrade, vaultBalance, activeAgents, recentFeeds, signals, logEntries };
+          return { ...s, events, lastTrade, vaultBalance, activeAgents, recentFeeds, signals, logEntries, agentStatus };
         });
       };
 
-      es.onerror = () => {
-        es.close();
-        esRef.current = null;
+      ws.onclose = () => {
+        wsRef.current = null;
         setState(s => ({ ...s, connected: false, reconnecting: true }));
-
         const delay = Math.min(1000 * Math.pow(2, retryCount.current), 30_000);
         retryCount.current++;
         retryTimerRef.current = setTimeout(connect, delay);
+      };
+
+      ws.onerror = () => {
+        ws.close();
       };
     } catch {
       setState(s => ({ ...s, connected: false, reconnecting: false }));
@@ -113,10 +164,10 @@ export function useDashboardStream(): DashboardState & { retry: () => void } {
   useEffect(() => {
     connect();
     return () => {
-      esRef.current?.close();
+      wsRef.current?.close();
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
     };
   }, [connect]);
 
-  return { ...state, retry: connect };
+  return { ...state, retry: connect, sendMessage, setEffectLevel, requestStatus };
 }
