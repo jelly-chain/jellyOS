@@ -4,6 +4,18 @@ import { Type, modelRegistry, priceFeed, newsFeed, fullAnalysis } from "@jellyos
 import type { ExtensionAPI } from "@jellyos/agent";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ESM-safe __dirname (works in both .ts compiled to CJS and .mjs ESM)
+const _esm_dirname = (() => {
+  try {
+    // ESM: import.meta.url is defined
+    return path.dirname(fileURLToPath((import.meta as any).url));
+  } catch {
+    // CJS fallback
+    return typeof __dirname !== "undefined" ? __dirname : process.cwd();
+  }
+})();
 import { WebSocketServer } from "ws";
 import type { WebSocket } from "ws";
 import { WalletManager } from "../src/wallet/WalletManager";
@@ -427,10 +439,7 @@ export default function jellyos(agent: ExtensionAPI): void {
         newsFeed.start();
       } catch { /* framework feed errors are non-fatal */ }
 
-      // Init dynamic model registry (357 models from OpenRouter)
-      modelRegistry.initialise().catch(() => {});
-
-      // Wire model count to status bar
+      // Wire model count to status bar (registry already initialised by cli.js -- no second fetch)
       setTimeout(() => {
         ctx.ui.setStatus("models", `${modelRegistry.modelCount} models`);
       }, 2000);
@@ -483,7 +492,7 @@ export default function jellyos(agent: ExtensionAPI): void {
     let basePrompt = "";
     try {
       const { readFileSync } = require("node:fs");
-      const promptPath = path.join(__dirname, "..", "prompts", "jellyos.md");
+      const promptPath = path.join(_esm_dirname, "..", "prompts", "jellyos.md");
       basePrompt = readFileSync(promptPath, "utf-8");
     } catch { /* fall through with empty base */ }
 
@@ -583,7 +592,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       if (!vault) { ctx.ui.notify("Vault not initialized"); return; }
       const s = vault.getStats();
       ctx.ui.notify(vault.isLocked()
-        ? ctx.ui.theme.fg("warning", "🔒 Vault locked -- use /unlock to access")
+        ? ctx.ui.theme.fg("warn", "🔒 Vault locked -- use /unlock to access")
         : ctx.ui.theme.fg("success", `🔓 Vault: $${s.balance?.toFixed(2) ?? "0"} USD | ${s.entries} entries`));
     },
   });
@@ -754,7 +763,7 @@ export default function jellyos(agent: ExtensionAPI): void {
       if (!vault) { ctx.ui.notify("Vault not initialized"); return; }
       if (vault.isLocked()) { ctx.ui.notify("Vault is already locked 🔒"); return; }
       vault.lock();
-      ctx.ui.notify(ctx.ui.theme.fg("warning", "🔒 Vault locked"));
+      ctx.ui.notify(ctx.ui.theme.fg("warn", "🔒 Vault locked"));
     },
   });
 
@@ -1920,9 +1929,9 @@ export default function jellyos(agent: ExtensionAPI): void {
   });
 
   agent.registerTool({
-    name: "get_news",
-    label: "Crypto News",
-    description: "Get latest crypto news from feed sources or CryptoCompare fallback",
+    name: "get_news_feeds",
+    label: "Crypto News (FeedManager)",
+    description: "Get latest crypto news from JellyOS live feed sources or CryptoCompare fallback. Includes category filter and richer metadata than get_news.",
     parameters: Type.Object({
       limit:    Type.Optional(Type.Number({ description: "Number of articles (default 5)" })),
       category: Type.Optional(Type.String({ description: "Topic filter: defi, nft, ethereum, bitcoin, etc." })),
@@ -1946,39 +1955,11 @@ export default function jellyos(agent: ExtensionAPI): void {
     },
   });
 
-  // -- Tools: Framework (from @jellyos/agent) --------------------------------
+  // -- Tools: Framework duplicates removed ----------------------------------
+  // analyze_ta and get_news are registered by App.js (framework registerBuiltinTools).
+  // Re-registering them here would silently overwrite the framework versions with
+  // identical implementations. Removed to avoid the double-registration.
 
-  agent.registerTool({
-    name: "analyze_ta",
-    label: "Technical Analysis",
-    description: "Run full technical analysis on price data: RSI, MACD, Bollinger Bands, EMA crossover, ATR, volume profile. Returns buy/sell signals.",
-    parameters: Type.Object({
-      prices:  Type.Array(Type.Number(), { description: "Array of closing prices (most recent last)" }),
-      highs:   Type.Optional(Type.Array(Type.Number(), { description: "High prices (optional, for ATR)" })),
-      lows:    Type.Optional(Type.Array(Type.Number(), { description: "Low prices (optional, for ATR)" })),
-      volumes: Type.Optional(Type.Array(Type.Number(), { description: "Volume data (optional)" })),
-    }),
-    async execute(_id, p) {
-      const closes  = p.prices as number[];
-      const highs   = (p.highs as number[] | undefined) ?? [];
-      const lows    = (p.lows as number[] | undefined) ?? [];
-      const volumes = (p.volumes as number[] | undefined) ?? [];
-      const candles = closes.map((c, i) => ({
-        timestamp: 0, open: c, high: highs[i] ?? c, low: lows[i] ?? c, close: c, volume: volumes[i] ?? 0,
-      }));
-      const results = fullAnalysis(candles);
-      const lines   = results.map(r => {
-        const s = r.signal === "bullish" ? "🟢" : r.signal === "bearish" ? "🔴" : "⚪";
-        const v = Array.isArray(r.value) ? `[${(r.value as number[]).length} values]` : typeof r.value === "number" ? r.value : "-";
-        return `${s} ${r.indicator}: ${v}`;
-      }).join("\n");
-      const summary = results.find(r => r.indicator === "SUMMARY");
-      return {
-        content: [{ type: "text" as const, text: `Technical Analysis Results:\n${lines}` }],
-        details: { results, overall_signal: summary?.signal, overall_score: summary?.value },
-      };
-    },
-  });
 
   agent.registerTool({
     name: "get_news_sentiment",

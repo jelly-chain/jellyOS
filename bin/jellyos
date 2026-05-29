@@ -153,7 +153,7 @@ function runAgent() {
   // The only way to change what Ink sees is to actually shrink the TTY via
   // `stty cols N` before spawning — that writes through ioctl so both parent
   // and child see the reduced width.  Restore on exit.
-  const WIDE_CHAR_OFFSET = 6;
+  const WIDE_CHAR_OFFSET = 3; // 3 wide emoji in status bar (🪼 🔒 ⚡) × 1 extra col each
   const rawCols = process.stdout.columns || 120;
   const rawRows = process.stdout.rows    || 40;
   const cols    = Math.max(40, rawCols - WIDE_CHAR_OFFSET);
