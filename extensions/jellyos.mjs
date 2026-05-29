@@ -1,4 +1,3 @@
-import { createRequire } from 'module'; const require = createRequire(import.meta.url);
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -684,15 +683,22 @@ var init_PortfolioManager = __esm({
 });
 
 // extensions/jellyos.ts
-import { Type, modelRegistry, priceFeed, newsFeed, fullAnalysis } from "@jellyos/agent";
+import { Type, modelRegistry, priceFeed, newsFeed } from "@jellyos/agent";
 import * as os from "node:os";
 import * as path2 from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 
 // src/wallet/WalletManager.ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import * as crypto from "crypto";
+var WALLET_FILE_VERSION = 2;
+var WALLET_KDF = "argon2id";
+var WALLET_ARGON2_TIME = 3;
+var WALLET_ARGON2_MEM = 65536;
+var WALLET_ARGON2_PARALLELISM = 4;
+var WALLET_DERIVED_KEY_LEN = 32;
 function keccak256Hex(data) {
   const { ethers } = __require("ethers");
   return ethers.utils.keccak256(data).slice(2);
@@ -729,23 +735,58 @@ function bech32Encode(hrp, data) {
   const checksum = [0, 1, 2, 3, 4, 5].map((i) => cs >> 5 * (5 - i) & 31);
   return hrp + "1" + [...data5, ...checksum].map((d) => B32_CHARSET[d]).join("");
 }
-var WalletManager = class {
+var WalletManager = class _WalletManager {
   walletsDir;
   wallets = /* @__PURE__ */ new Map();
+  passphrase = null;
   constructor(jellyHome) {
     this.walletsDir = resolve(jellyHome, "wallets");
     if (!existsSync(this.walletsDir)) mkdirSync(this.walletsDir, { recursive: true });
     this.loadAll();
   }
+  // ── Passphrase ────────────────────────────────────────────────────────────
+  setPassphrase(passphrase) {
+    if (!passphrase || passphrase.length < 8) {
+      throw new Error("Passphrase must be at least 8 characters.");
+    }
+    this.passphrase = passphrase;
+  }
+  static async deriveWalletKey(passphrase, salt) {
+    const argon22 = __require("argon2");
+    const hash2 = await argon22.hash(passphrase, {
+      type: argon22.argon2id,
+      salt,
+      timeCost: WALLET_ARGON2_TIME,
+      memoryCost: WALLET_ARGON2_MEM,
+      parallelism: WALLET_ARGON2_PARALLELISM,
+      hashLength: WALLET_DERIVED_KEY_LEN,
+      raw: true
+    });
+    return hash2;
+  }
+  static encryptData(plaintext, key) {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+    const ct = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
+    return { iv, authTag: cipher.getAuthTag(), ciphertext: ct };
+  }
+  static decryptData(ct, key, iv, authTag) {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
+    return pt.toString("utf-8");
+  }
   // ── Wallet generation ────────────────────────────────────────────────────
   generateEVMWallet() {
     const ecdh = crypto.createECDH("secp256k1");
     ecdh.generateKeys();
-    const privHex = ecdh.getPrivateKey("hex");
+    const privBuf = ecdh.getPrivateKey();
+    const privHex = privBuf.toString("hex");
     const pubBytes = ecdh.getPublicKey();
     const pubKey64 = pubBytes.slice(1);
     const hash2 = keccak256Hex(pubKey64);
     const address = eip55Checksum("0x" + hash2.slice(-40));
+    privBuf.fill(0);
     return {
       chain: "evm",
       address,
@@ -772,7 +813,7 @@ var WalletManager = class {
     } catch {
       const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
       const pubDer = publicKey.export({ type: "spki", format: "der" });
-      const pubRaw = pubDer.slice(-32);
+      const pubRaw = Buffer.from(pubDer.slice(-32));
       const privDer = privateKey.export({ type: "pkcs8", format: "der" });
       const b58chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
       let num = BigInt("0x" + pubRaw.toString("hex"));
@@ -795,7 +836,7 @@ var WalletManager = class {
   generateCosmosWallet() {
     const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
     const pubDer = publicKey.export({ type: "spki", format: "der" });
-    const pubRaw = pubDer.slice(-32);
+    const pubRaw = Buffer.from(pubDer.slice(-32));
     let hash2;
     try {
       hash2 = crypto.createHash("ripemd160").update(
@@ -819,19 +860,16 @@ var WalletManager = class {
   }
   // ── Signing ──────────────────────────────────────────────────────────────
   /**
-   * Sign an unsigned transaction payload (raw bytes hex or UTF-8 message).
-   *
-   * EVM    : Signs with Ethereum personal_sign prefix using ethers.Wallet.signMessage(),
-   *          or raw keccak256+ECDSA for a raw 32-byte hash input.
-   * Solana : Ed25519 raw signature over the bytes.
-   * Cosmos : Ed25519 over SHA256(bytes).
-   *
-   * Returns hex-encoded signature. Does NOT broadcast.
+   * Sign a message or payload. For encrypted wallets, unlock() must be called
+   * first or the privateKey field will be '[encrypted]' and this will throw.
    */
   signMessage(chain, data) {
     const normalized = this.normalizeChain(chain);
     const wallet = this.wallets.get(normalized);
     if (!wallet) return null;
+    if (wallet.privateKey === "[encrypted]") {
+      throw new Error(`Wallet ${normalized} is locked. Call unlock() with your passphrase first.`);
+    }
     const isHex = /^(0x)?[0-9a-f]+$/i.test(data.replace(/\s/g, ""));
     const msgBytes = isHex ? Buffer.from(data.replace(/^0x/, ""), "hex") : Buffer.from(data, "utf-8");
     try {
@@ -839,15 +877,13 @@ var WalletManager = class {
         try {
           const { ethers } = __require("ethers");
           const privKey = wallet.privateKey.startsWith("0x") ? wallet.privateKey : "0x" + wallet.privateKey;
-          const signer = new ethers.Wallet(privKey);
+          const signingKey = new ethers.utils.SigningKey(privKey);
           if (msgBytes.length === 32) {
-            const signingKey2 = new ethers.utils.SigningKey(privKey);
-            const sig = signingKey2.signDigest(msgBytes);
+            const sig = signingKey.signDigest(msgBytes);
             return ethers.utils.joinSignature(sig);
           }
           const prefixed = "Ethereum Signed Message:\n" + msgBytes.length;
           const hash3 = keccak256Hex(Buffer.concat([Buffer.from(prefixed), msgBytes]));
-          const signingKey = new ethers.utils.SigningKey(privKey);
           return ethers.utils.joinSignature(signingKey.signDigest("0x" + hash3));
         } catch {
         }
@@ -880,7 +916,11 @@ var WalletManager = class {
     if (!this.wallets.has("solana")) this.create("solana");
     if (!this.wallets.has("cosmos")) this.create("cosmos");
   }
-  create(chain) {
+  create(chain, passphrase) {
+    if (!this.passphrase && !passphrase) {
+      throw new Error("Call setPassphrase() before create(), or pass passphrase as argument.");
+    }
+    const pw = passphrase || this.passphrase;
     let wallet;
     switch (chain) {
       case "solana":
@@ -895,13 +935,92 @@ var WalletManager = class {
         break;
     }
     this.wallets.set(chain, wallet);
-    const fp = resolve(this.walletsDir, `${chain}.json`);
-    writeFileSync(fp, JSON.stringify(wallet, null, 2), "utf-8");
+    this.wallets.set(chain, {
+      chain: wallet.chain,
+      address: wallet.address,
+      privateKey: "[encrypted]",
+      publicKey: wallet.publicKey,
+      keyType: wallet.keyType,
+      createdAt: wallet.createdAt
+    });
+    this.saveEncrypted(wallet, pw);
+    return wallet;
+  }
+  async saveEncrypted(wallet, passphrase) {
+    const salt = crypto.randomBytes(16);
+    const key = await _WalletManager.deriveWalletKey(passphrase, salt);
+    const { iv, authTag, ciphertext } = _WalletManager.encryptData(wallet.privateKey, key);
+    const file = {
+      version: WALLET_FILE_VERSION,
+      address: wallet.address,
+      publicKey: wallet.publicKey,
+      keyType: wallet.keyType,
+      chain: wallet.chain,
+      createdAt: wallet.createdAt,
+      encrypted: {
+        kdf: WALLET_KDF,
+        salt: salt.toString("hex"),
+        iv: iv.toString("hex"),
+        authTag: authTag.toString("hex"),
+        ciphertext: ciphertext.toString("hex")
+      }
+    };
+    const fp = resolve(this.walletsDir, `${wallet.chain}.json`);
+    writeFileSync(fp, JSON.stringify(file, null, 2), "utf-8");
     try {
       __require("fs").chmodSync(fp, 384);
     } catch {
     }
-    return wallet;
+    key.fill(0);
+  }
+  /**
+   * Unlock a wallet for signing. Decrypts the private key into memory
+   * and returns the full WalletInfo. Returns null on wrong passphrase.
+   */
+  async unlock(chain, passphrase) {
+    const stored = this.wallets.get(chain);
+    if (!stored) throw new Error(`No wallet for ${chain}. Run create() first.`);
+    const fp = resolve(this.walletsDir, `${chain}.json`);
+    let raw;
+    try {
+      raw = JSON.parse(readFileSync(fp, "utf-8"));
+    } catch {
+      throw new Error(`Cannot read wallet file: ${fp}`);
+    }
+    if (!raw.encrypted) {
+      this.wallets.set(chain, stored);
+      return stored;
+    }
+    try {
+      const salt = Buffer.from(raw.encrypted.salt, "hex");
+      const key = await _WalletManager.deriveWalletKey(passphrase, salt);
+      const iv = Buffer.from(raw.encrypted.iv, "hex");
+      const authTag = Buffer.from(raw.encrypted.authTag, "hex");
+      const ct = Buffer.from(raw.encrypted.ciphertext, "hex");
+      const privateKey = _WalletManager.decryptData(ct, key, iv, authTag);
+      key.fill(0);
+      const decrypted = {
+        chain: raw.chain,
+        address: raw.address,
+        privateKey,
+        publicKey: raw.publicKey,
+        keyType: raw.keyType,
+        createdAt: raw.createdAt
+      };
+      this.wallets.set(chain, decrypted);
+      return decrypted;
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Lock a wallet — zeroes the private key from memory.
+   */
+  lock(chain) {
+    const stored = this.wallets.get(chain);
+    if (stored) {
+      stored.privateKey = "[encrypted]";
+    }
   }
   getAddress(chain) {
     return this.wallets.get(this.normalizeChain(chain))?.address ?? null;
@@ -916,6 +1035,10 @@ var WalletManager = class {
   }
   hasWallets() {
     return this.wallets.size > 0;
+  }
+  isLocked(chain) {
+    const w = this.wallets.get(chain);
+    return !w || w.privateKey === "[encrypted]";
   }
   // ── Private ──────────────────────────────────────────────────────────────
   normalizeChain(chain) {
@@ -944,7 +1067,19 @@ var WalletManager = class {
       const fp = resolve(this.walletsDir, `${chain}.json`);
       if (existsSync(fp)) {
         try {
-          this.wallets.set(chain, JSON.parse(readFileSync(fp, "utf-8")));
+          const raw = JSON.parse(readFileSync(fp, "utf-8"));
+          if (raw.encrypted) {
+            this.wallets.set(chain, {
+              chain: raw.chain,
+              address: raw.address,
+              privateKey: "[encrypted]",
+              publicKey: raw.publicKey,
+              keyType: raw.keyType,
+              createdAt: raw.createdAt
+            });
+          } else {
+            this.wallets.set(chain, raw);
+          }
         } catch {
         }
       }
@@ -1168,10 +1303,11 @@ var AutoVault = class {
   async check(getPnL) {
     const pnl = getPnL();
     if (pnl >= this.threshold && !this.vault.isLocked()) {
+      const sweepAmount = Math.round(pnl * 100) / 100;
       try {
-        await this.vault.sweep(pnl, `auto-sweep (threshold: $${this.threshold})`);
-        this.logger.info(`Auto-swept $${pnl.toFixed(2)} to vault`);
-        if (this.onSweep) this.onSweep(pnl);
+        await this.vault.sweep(sweepAmount, `auto-sweep P&L $${sweepAmount.toFixed(2)} (threshold: $${this.threshold})`);
+        this.logger.info(`Auto-swept $${sweepAmount.toFixed(2)} to vault`);
+        if (this.onSweep) this.onSweep(sweepAmount);
       } catch (err) {
         this.logger.error("Auto-sweep failed", err);
       }
@@ -2017,16 +2153,27 @@ var SignalEngine = class {
     };
   }
   /**
-   * Returns the estimated net PnL across all active signals.
-   * Calculated as: sum of (signal.strength * direction_sign * 100) for active longs/shorts.
-   * AutoVault uses this to decide when to sweep profits.
+   * Returns the net directional score across active signals (-N to +N).
+   * This is NOT real PnL — it is a synthetic confidence-weighted signal summary.
+   * AutoVault should use PositionManager.getStats().totalUnrealizedPnL instead.
    */
   getNetPnL() {
     const active = this.getActiveSignals();
     return active.reduce((sum, s) => {
       const sign2 = s.direction === "long" ? 1 : s.direction === "short" ? -1 : 0;
-      return sum + sign2 * s.strength * 100;
+      return sum + sign2 * s.strength * s.confidence * 100;
     }, 0);
+  }
+  /**
+   * Returns the real PnL from the PositionManager if available.
+   * Falls back to the synthetic signal score above.
+   */
+  getRealPnL(positionManager) {
+    if (positionManager) {
+      const stats = positionManager.getStats();
+      return stats.totalRealizedPnL + stats.totalUnrealizedPnL;
+    }
+    return this.getNetPnL();
   }
   getActiveSignals(asset) {
     const now = Date.now();
@@ -2054,6 +2201,13 @@ var SignalEngine = class {
 };
 
 // extensions/jellyos.ts
+var _esm_dirname = (() => {
+  try {
+    return path2.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return typeof __dirname !== "undefined" ? __dirname : process.cwd();
+  }
+})();
 var JELLY_HOME = process.env.JELLYOS_HOME ?? path2.join(os.homedir(), ".jelly");
 var CHAIN_NETWORK = {
   bsc: "bnb-mainnet",
@@ -2473,8 +2627,6 @@ function jellyos(agent) {
         newsFeed.start();
       } catch {
       }
-      modelRegistry.initialise().catch(() => {
-      });
       setTimeout(() => {
         ctx.ui.setStatus("models", `${modelRegistry.modelCount} models`);
       }, 2e3);
@@ -2516,7 +2668,7 @@ function jellyos(agent) {
     let basePrompt = "";
     try {
       const { readFileSync: readFileSync3 } = __require("node:fs");
-      const promptPath = path2.join(__dirname, "..", "prompts", "jellyos.md");
+      const promptPath = path2.join(_esm_dirname, "..", "prompts", "jellyos.md");
       basePrompt = readFileSync3(promptPath, "utf-8");
     } catch {
     }
@@ -2602,7 +2754,7 @@ ${tasks.map((t) => `- ${t.task}`).join("\n")}`;
         return;
       }
       const s = vault.getStats();
-      ctx.ui.notify(vault.isLocked() ? ctx.ui.theme.fg("warning", "\u{1F512} Vault locked -- use /unlock to access") : ctx.ui.theme.fg("success", `\u{1F513} Vault: $${s.balance?.toFixed(2) ?? "0"} USD | ${s.entries} entries`));
+      ctx.ui.notify(vault.isLocked() ? ctx.ui.theme.fg("warn", "\u{1F512} Vault locked -- use /unlock to access") : ctx.ui.theme.fg("success", `\u{1F513} Vault: $${s.balance?.toFixed(2) ?? "0"} USD | ${s.entries} entries`));
     }
   });
   agent.registerCommand("status", {
@@ -2781,7 +2933,7 @@ ${desc[level]}`));
         return;
       }
       vault.lock();
-      ctx.ui.notify(ctx.ui.theme.fg("warning", "\u{1F512} Vault locked"));
+      ctx.ui.notify(ctx.ui.theme.fg("warn", "\u{1F512} Vault locked"));
     }
   });
   agent.registerCommand("changelog", {
@@ -3935,9 +4087,9 @@ Note: Demo mode -- connect DEX adapters for live execution.`
     }
   });
   agent.registerTool({
-    name: "get_news",
-    label: "Crypto News",
-    description: "Get latest crypto news from feed sources or CryptoCompare fallback",
+    name: "get_news_feeds",
+    label: "Crypto News (FeedManager)",
+    description: "Get latest crypto news from JellyOS live feed sources or CryptoCompare fallback. Includes category filter and richer metadata than get_news.",
     parameters: Type.Object({
       limit: Type.Optional(Type.Number({ description: "Number of articles (default 5)" })),
       category: Type.Optional(Type.String({ description: "Topic filter: defi, nft, ethereum, bitcoin, etc." }))
@@ -3961,43 +4113,6 @@ Note: Demo mode -- connect DEX adapters for live execution.`
         (n) => `\u2022 [${n.source}] ${n.title}
   ${(n.body ?? "").slice(0, 150)}`
       ).join("\n\n"));
-    }
-  });
-  agent.registerTool({
-    name: "analyze_ta",
-    label: "Technical Analysis",
-    description: "Run full technical analysis on price data: RSI, MACD, Bollinger Bands, EMA crossover, ATR, volume profile. Returns buy/sell signals.",
-    parameters: Type.Object({
-      prices: Type.Array(Type.Number(), { description: "Array of closing prices (most recent last)" }),
-      highs: Type.Optional(Type.Array(Type.Number(), { description: "High prices (optional, for ATR)" })),
-      lows: Type.Optional(Type.Array(Type.Number(), { description: "Low prices (optional, for ATR)" })),
-      volumes: Type.Optional(Type.Array(Type.Number(), { description: "Volume data (optional)" }))
-    }),
-    async execute(_id, p) {
-      const closes = p.prices;
-      const highs = p.highs ?? [];
-      const lows = p.lows ?? [];
-      const volumes = p.volumes ?? [];
-      const candles = closes.map((c, i) => ({
-        timestamp: 0,
-        open: c,
-        high: highs[i] ?? c,
-        low: lows[i] ?? c,
-        close: c,
-        volume: volumes[i] ?? 0
-      }));
-      const results = fullAnalysis(candles);
-      const lines = results.map((r) => {
-        const s = r.signal === "bullish" ? "\u{1F7E2}" : r.signal === "bearish" ? "\u{1F534}" : "\u26AA";
-        const v = Array.isArray(r.value) ? `[${r.value.length} values]` : typeof r.value === "number" ? r.value : "-";
-        return `${s} ${r.indicator}: ${v}`;
-      }).join("\n");
-      const summary = results.find((r) => r.indicator === "SUMMARY");
-      return {
-        content: [{ type: "text", text: `Technical Analysis Results:
-${lines}` }],
-        details: { results, overall_signal: summary?.signal, overall_score: summary?.value }
-      };
     }
   });
   agent.registerTool({
