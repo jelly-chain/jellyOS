@@ -1287,6 +1287,27 @@ export default function jellyos(agent: ExtensionAPI): void {
     totalTurns:         0,
     toolCallsTotal:     0,
     fallbacks:          0,
+    // Track swarm and model fallback events from AgentRunner
+    onAgentEvent: (event) => {
+      switch (event.type) {
+        case "swarm_subtask":
+          swarmState.lastTaskComplexity = Math.max(swarmState.lastTaskComplexity, 50); // any swarm task is complex
+          swarmState.lastSubtaskCount = event.remaining + 1;
+          break;
+        case "swarm_review":
+          swarmState.lastTaskComplexity = 100; // full swarm analysis
+          break;
+        case "model_fallback":
+          swarmState.fallbacks++;
+          break;
+        case "tool_done":
+          swarmState.toolCallsTotal++;
+          break;
+        case "turn_done":
+          swarmState.totalTurns++;
+          break;
+      }
+    },
   };
 
   agent.registerCommand("agents", {

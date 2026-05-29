@@ -1,3 +1,4 @@
+import { createRequire } from 'module'; const require = createRequire(import.meta.url);
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -3469,7 +3470,28 @@ ${lines.join("\n")}`);
     lastModel: process.env.DEFAULT_MODEL ?? "default",
     totalTurns: 0,
     toolCallsTotal: 0,
-    fallbacks: 0
+    fallbacks: 0,
+    // Track swarm and model fallback events from AgentRunner
+    onAgentEvent: (event) => {
+      switch (event.type) {
+        case "swarm_subtask":
+          swarmState.lastTaskComplexity = Math.max(swarmState.lastTaskComplexity, 50);
+          swarmState.lastSubtaskCount = event.remaining + 1;
+          break;
+        case "swarm_review":
+          swarmState.lastTaskComplexity = 100;
+          break;
+        case "model_fallback":
+          swarmState.fallbacks++;
+          break;
+        case "tool_done":
+          swarmState.toolCallsTotal++;
+          break;
+        case "turn_done":
+          swarmState.totalTurns++;
+          break;
+      }
+    }
   };
   agent.registerCommand("agents", {
     description: "Show swarm router status and trigger multi-step analysis",
